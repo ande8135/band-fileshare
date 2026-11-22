@@ -47,6 +47,11 @@ resource "aws_iam_role_policy" "api" {
         ]
       },
       {
+        Effect   = "Allow"
+        Action   = ["cognito-idp:AdminCreateUser"]
+        Resource = aws_cognito_user_pool.main.arn
+      },
+      {
         # The signer's permissions bound what presigned URLs can do.
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
@@ -73,6 +78,8 @@ resource "aws_lambda_function" "api" {
       COMMENTS_TABLE = aws_dynamodb_table.comments.name
       FILES_BUCKET   = aws_s3_bucket.files.id
       PRESIGN_EXPIRY = tostring(var.presign_expiry_seconds)
+      USER_POOL_ID   = aws_cognito_user_pool.main.id
+      ADMIN_EMAILS   = join(",", [for e in var.admin_emails : lower(e)])
     }
   }
 
@@ -135,4 +142,58 @@ resource "aws_lambda_permission" "api" {
   function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+}
+
+# ---------------------------------------------------------------------------
+# Cognito pre-sign-up trigger: federated (Google) sign-ups only if invited
+# ---------------------------------------------------------------------------
+resource "aws_cloudwatch_log_group" "presignup" {
+  name              = "/aws/lambda/${local.name}-presignup"
+  retention_in_days = 30
+}
+
+resource "aws_iam_role" "presignup" {
+  name               = "${local.name}-presignup"
+  assume_role_policy = aws_iam_role.api.assume_role_policy
+}
+
+resource "aws_iam_role_policy" "presignup" {
+  name = "access"
+  role = aws_iam_role.presignup.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.presignup.arn}:*"
+      },
+      {
+        # Wildcard pool id avoids a dependency cycle (the pool references this function).
+        Effect   = "Allow"
+        Action   = ["cognito-idp:ListUsers"]
+        Resource = "arn:aws:cognito-idp:${var.aws_region}:${data.aws_caller_identity.current.account_id}:userpool/*"
+      },
+    ]
+  })
+}
+
+resource "aws_lambda_function" "presignup" {
+  function_name    = "${local.name}-presignup"
+  role             = aws_iam_role.presignup.arn
+  runtime          = "nodejs22.x"
+  handler          = "presignup.handler"
+  filename         = data.archive_file.api.output_path
+  source_code_hash = data.archive_file.api.output_base64sha256
+  timeout          = 10
+
+  depends_on = [aws_cloudwatch_log_group.presignup, aws_iam_role_policy.presignup]
+}
+
+resource "aws_lambda_permission" "presignup" {
+  statement_id  = "AllowCognito"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.presignup.function_name
+  principal     = "cognito-idp.amazonaws.com"
+  source_arn    = aws_cognito_user_pool.main.arn
 }

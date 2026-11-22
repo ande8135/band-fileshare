@@ -5,8 +5,20 @@ resource "aws_cognito_user_pool" "main" {
   auto_verified_attributes = ["email"]
   mfa_configuration        = "OFF"
 
+  # Invite-only: nobody can self-register.
   admin_create_user_config {
-    allow_admin_create_user_only = !var.allow_self_signup
+    allow_admin_create_user_only = true
+
+    invite_message_template {
+      email_subject = "You're invited to ${local.name}"
+      email_message = "You've been invited to ${local.site_url}. Sign in with email {username} and temporary password {####} (or use Google with this email)."
+      sms_message   = "Username {username}, temporary password {####}"
+    }
+  }
+
+  # Blocks first-time Google sign-ins from anyone who hasn't been invited.
+  lambda_config {
+    pre_sign_up = aws_lambda_function.presignup.arn
   }
 
   password_policy {
@@ -78,5 +90,18 @@ resource "aws_cognito_user_pool_client" "web" {
     access_token  = "hours"
     id_token      = "hours"
     refresh_token = "days"
+  }
+}
+
+resource "aws_cognito_user" "admin" {
+  for_each = toset([for e in var.admin_emails : lower(e)])
+
+  user_pool_id             = aws_cognito_user_pool.main.id
+  username                 = each.value
+  desired_delivery_mediums = ["EMAIL"]
+
+  attributes = {
+    email          = each.value
+    email_verified = "true"
   }
 }

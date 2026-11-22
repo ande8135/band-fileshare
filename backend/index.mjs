@@ -7,12 +7,16 @@ import {
   S3Client, HeadObjectCommand, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { CognitoIdentityProviderClient, AdminCreateUserCommand } from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 
 const NODES = process.env.NODES_TABLE;
 const VERSIONS = process.env.VERSIONS_TABLE;
 const COMMENTS = process.env.COMMENTS_TABLE;
 const BUCKET = process.env.FILES_BUCKET;
+const POOL = process.env.USER_POOL_ID;
+const ADMINS = (process.env.ADMIN_EMAILS || "").split(",").filter(Boolean);
+const cognito = new CognitoIdentityProviderClient({});
 const EXPIRY = Number(process.env.PRESIGN_EXPIRY || 900);
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -49,7 +53,8 @@ function parseBody(event) {
 function userFrom(event) {
   const c = event.requestContext?.authorizer?.jwt?.claims ?? {};
   const email = c.email ?? "";
-  return { id: c.sub, email, name: c.name || email || c.sub };
+  const isAdmin = ADMINS.includes(email.toLowerCase()) && String(c.email_verified) === "true";
+  return { id: c.sub, email, name: c.name || email || c.sub, isAdmin };
 }
 
 async function getNode(id) {
@@ -332,8 +337,28 @@ async function addComment(id, body, user) {
   return json(201, item);
 }
 
+async function invite(body, user) {
+  if (!user.isAdmin) throw new HttpError(403, "Admins only");
+  const email = String(body.email ?? "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new HttpError(400, "Invalid email");
+  try {
+    await cognito.send(new AdminCreateUserCommand({
+      UserPoolId: POOL,
+      Username: email,
+      UserAttributes: [{ Name: "email", Value: email }, { Name: "email_verified", Value: "true" }],
+      DesiredDeliveryMediums: ["EMAIL"],
+    }));
+  } catch (e) {
+    if (e.name === "UsernameExistsException") throw new HttpError(409, `${email} already has access`);
+    throw e;
+  }
+  return json(201, { ok: true, email });
+}
+
 // ---------- router ----------
 const routes = [
+  ["GET", /^\/me$/, (_, e, u) => json(200, { email: u.email, name: u.name, isAdmin: u.isAdmin })],
+  ["POST", /^\/invites$/, (_, e, u) => invite(parseBody(e), u)],
   ["GET", /^\/folders\/([^/]+)\/contents$/, ([id]) => listFolder(id)],
   ["POST", /^\/folders$/, (_, e, u) => createFolder(parseBody(e), u)],
   ["DELETE", /^\/folders\/([^/]+)$/, ([id]) => deleteFolder(id)],

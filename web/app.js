@@ -58,6 +58,11 @@ async function tokenRequest(params) {
 
 async function handleCallback() {
   const p = new URLSearchParams(location.search);
+  if (p.has("error")) {
+    history.replaceState(null, "", cfg.redirectUri);
+    const d = p.get("error_description") || "";
+    throw new Error(/invited|invitation/i.test(d) ? "That email hasn't been invited. Ask an admin for an invite." : "Sign-in failed");
+  }
   if (!p.has("code")) return;
   const saved = JSON.parse(sessionStorage.getItem("pkce") || "null");
   sessionStorage.removeItem("pkce");
@@ -284,7 +289,7 @@ async function deleteFile() {
 // ---------------- boot ----------------
 async function main() {
   $("loginBtn").onclick = login;
-  try { await handleCallback(); } catch (e) { toast(e.message); }
+  try { await handleCallback(); } catch (e) { $("loginMsg").textContent = e.message; toast(e.message); }
   const token = await idToken();
   if (!token) { $("login").hidden = false; return; }
 
@@ -293,6 +298,12 @@ async function main() {
   $("user").hidden = false;
   $("app").hidden = false;
   $("logout").onclick = logout;
+  api("GET", "/me").then((me) => { $("invite").hidden = !me.isAdmin; }).catch(() => {});
+  $("invite").onclick = async () => {
+    const email = prompt("Email address to invite");
+    if (!email) return;
+    try { await api("POST", "/invites", { email }); toast(`Invitation sent to ${email.trim().toLowerCase()}`); } catch (e) { toast(e.message); }
+  };
 
   $("newFolder").onclick = newFolder;
   $("upload").onclick = () => $("picker").click();

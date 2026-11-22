@@ -1,5 +1,6 @@
 aws_region            = "us-east-1"
 cognito_domain_prefix = "my-band-fileshare" # globally unique in the region
+admin_emails          = ["you@example.com"] # get an invite email on apply
 google_client_id      = "1234567890-abc.apps.googleusercontent.com"
 # Pass the secret via env var rather than a file:
 #   export TF_VAR_google_client_secret='GOCSPX-...'

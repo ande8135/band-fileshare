@@ -30,10 +30,14 @@ variable "google_client_secret" {
   sensitive   = true
 }
 
-variable "allow_self_signup" {
-  description = "If false, only admins can create email/password users (Google sign-in still creates users on first login)."
-  type        = bool
-  default     = true
+variable "admin_emails" {
+  description = "Admins: each gets an invitation email now and can invite others from the app (Invite button)."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.admin_emails) > 0
+    error_message = "Provide at least one admin email."
+  }
 }
 
 variable "dev_origins" {

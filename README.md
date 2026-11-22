@@ -28,6 +28,13 @@ All signed-in users share one workspace (everyone sees everything).
 
 Changing files in `web/` or `backend/` and re-running `terraform apply` redeploys them (CloudFront caching is disabled, so changes are live immediately).
 
+## Access: invite-only
+
+- `admin_emails` get an invitation email on `terraform apply` (temporary password, set a new one on first sign-in, or just use Google with that email).
+- Admins see an **Invite people** button; it creates a Cognito user and emails them. Anyone else can't register: self-signup is off, and a pre-sign-up Lambda rejects first-time Google logins unless an invited user with that email exists.
+- To revoke someone: Cognito console → User pools → Users → delete (delete both the invited user and any Google-linked one with the same email). Current sessions stay valid until the 1h token expires.
+- Add/remove admins by editing `admin_emails` and re-applying.
+
 ## Local development
 
 Set `dev_origins = ["http://localhost:8080"]`, apply, then `cd web && npx serve -l 8080 .` (the deployed `config.js` is in S3; copy it into `web/` locally, don't commit it).
@@ -43,5 +50,4 @@ Set `dev_origins = ["http://localhost:8080"]`, apply, then `cd web && npx serve 
 - Uploads use a single presigned PUT (max 5 GB per file).
 - Folders can only be deleted when empty; there is no rename/move yet.
 - A Google user and an email/password user with the same address are separate Cognito users (comments show the email either way). Linking them needs a pre-signup Lambda trigger.
-- Self-signup is on by default; set `allow_self_signup = false` to invite users from the Cognito console instead.
 - Terraform state holds the Google client secret; use a remote, encrypted backend for real use.
