@@ -1,0 +1,9 @@
+.terraform/
+.build/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+node_modules/
+crash.log
+config.js

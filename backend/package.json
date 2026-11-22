@@ -1,0 +1,7 @@
+{
+  "name": "fileshare-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lambda API. AWS SDK v3 is provided by the nodejs22.x runtime, so nothing to install."
+}

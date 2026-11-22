@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fileshare</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📁</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>📁 Fileshare</h1>
+    <div id="user" hidden><span id="who"></span> <button id="logout" class="link">Sign out</button></div>
+  </header>
+
+  <main id="app" hidden>
+    <div class="toolbar">
+      <nav id="crumbs" aria-label="Breadcrumbs"></nav>
+      <div class="actions">
+        <button id="newFolder">New folder</button>
+        <button id="upload" class="primary">Upload files</button>
+        <input id="picker" type="file" multiple hidden>
+      </div>
+    </div>
+    <div id="drop">
+      <table>
+        <thead><tr><th>Name</th><th>Version</th><th>Size</th><th>Modified</th><th>By</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="muted" hidden>Empty folder. Drop files here or use Upload.</p>
+    </div>
+    <ul id="uploads"></ul>
+  </main>
+
+  <aside id="panel" hidden>
+    <div class="panel-head">
+      <h2 id="pName"></h2>
+      <button id="pClose" class="link" aria-label="Close">✕</button>
+    </div>
+    <section>
+      <h3>Versions</h3>
+      <ul id="versions"></ul>
+      <div class="row">
+        <button id="newVer">Upload new version</button>
+        <input id="verPicker" type="file" hidden>
+        <input id="verNote" placeholder="Note (optional)" maxlength="500">
+      </div>
+    </section>
+    <section>
+      <h3>Comments</h3>
+      <label class="muted">Show <select id="cFilter"></select></label>
+      <ul id="comments"></ul>
+      <form id="cForm">
+        <textarea id="cText" rows="3" maxlength="4000" placeholder="Add a comment…" required></textarea>
+        <div class="row">
+          <label class="muted">On <select id="cVersion"></select></label>
+          <button class="primary">Post</button>
+        </div>
+      </form>
+    </section>
+    <section><button id="delFile" class="danger">Delete file and all versions</button></section>
+  </aside>
+
+  <div id="login" class="center" hidden>
+    <p>Sign in to access the shared files.</p>
+    <button id="loginBtn" class="primary">Sign in</button>
+  </div>
+  <div id="toast" role="status"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
