@@ -106,7 +106,7 @@ locals {
     ico  = "image/x-icon"
     png  = "image/png"
   }
-  web_files = fileset("${path.module}/../web", "**")
+  web_files = toset([for f in fileset("${path.module}/../web", "**") : f if f != "config.js"])
 }
 
 resource "aws_s3_object" "site" {
