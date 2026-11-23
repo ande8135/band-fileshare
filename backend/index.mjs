@@ -1,19 +1,24 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
-  DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryCommand, BatchGetCommand,
+  DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryCommand, BatchGetCommand, ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { S3Client, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { CognitoIdentityProviderClient, AdminCreateUserCommand } from "@aws-sdk/client-cognito-identity-provider";
+import {
+  CognitoIdentityProviderClient, AdminCreateUserCommand, ListUsersCommand,
+  AdminDisableUserCommand, AdminEnableUserCommand, AdminUserGlobalSignOutCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 
 const NODES = process.env.NODES_TABLE;
 const VERSIONS = process.env.VERSIONS_TABLE;
 const COMMENTS = process.env.COMMENTS_TABLE;
 const PROFILES = process.env.PROFILES_TABLE;
+const USERS = process.env.USERS_TABLE;
 const BUCKET = process.env.FILES_BUCKET;
 const POOL = process.env.USER_POOL_ID;
-const ADMINS = (process.env.ADMIN_EMAILS || "").split(",").filter(Boolean);
+// Owners: permanent administrators from Terraform (admin_emails). They can't be demoted or removed in the app.
+const OWNERS = (process.env.ADMIN_EMAILS || "").split(",").filter(Boolean);
 const cognito = new CognitoIdentityProviderClient({});
 const EXPIRY = Number(process.env.PRESIGN_EXPIRY || 900);
 
@@ -54,8 +59,66 @@ function parseBody(event) {
 function userFrom(event) {
   const c = event.requestContext?.authorizer?.jwt?.claims ?? {};
   const email = c.email ?? "";
-  const isAdmin = ADMINS.includes(email.toLowerCase()) && String(c.email_verified) === "true";
-  return { id: c.sub, email, name: c.name || email || c.sub, isAdmin };
+  return { id: c.sub, email, name: c.name || email || c.sub, verified: String(c.email_verified) === "true", isAdmin: false };
+}
+
+// ---------- access control ----------
+// The users table is the source of truth for who may use the app and with which role. It is
+// checked on every request, so removing someone takes effect immediately (not when their token expires).
+function normEmail(raw) {
+  const email = String(raw ?? "").trim().toLowerCase();
+  if (!/^[^\s@"\\]+@[^\s@"\\]+\.[^\s@"\\]+$/.test(email) || email.length > 254) throw new HttpError(400, "Invalid email");
+  return email;
+}
+
+const cognitoUsersByEmail = async (email) =>
+  (await cognito.send(new ListUsersCommand({ UserPoolId: POOL, Filter: `email = "${email}"`, Limit: 10 }))).Users ?? [];
+
+async function getUserRec(email) {
+  return (await ddb.send(new GetCommand({ TableName: USERS, Key: { email } }))).Item;
+}
+
+// People invited before the users table existed only exist in Cognito; adopt them as members.
+async function adoptFromCognito(email) {
+  const native = (await cognitoUsersByEmail(email)).find((u) => u.UserStatus !== "EXTERNAL_PROVIDER");
+  if (!native) return undefined;
+  const rec = {
+    email, role: "member", status: native.Enabled ? "active" : "disabled",
+    invitedBy: "migrated", invitedAt: new Date().toISOString(),
+  };
+  try {
+    await ddb.send(new PutCommand({ TableName: USERS, Item: rec, ConditionExpression: "attribute_not_exists(email)" }));
+    return rec;
+  } catch (e) {
+    if (e.name === "ConditionalCheckFailedException") return getUserRec(email);
+    throw e;
+  }
+}
+
+async function authorize(user) {
+  const email = user.email.toLowerCase();
+  if (!email || !user.verified) throw new HttpError(403, "Your email address is not verified");
+  user.owner = OWNERS.includes(email);
+  if (user.owner) { user.role = "admin"; user.isAdmin = true; return; }
+  const rec = (await getUserRec(email)) ?? (await adoptFromCognito(email));
+  if (!rec) throw new HttpError(403, "You haven't been invited. Ask an administrator for an invitation.");
+  if (rec.status !== "active") throw new HttpError(403, "Your access has been removed. Ask an administrator to restore it.");
+  user.role = rec.role;
+  user.isAdmin = rec.role === "admin";
+}
+
+async function setCognitoEnabled(email, enabled) {
+  // Best effort: the users table already blocks the API; this also stops new logins and ends sessions.
+  try {
+    for (const u of await cognitoUsersByEmail(email)) {
+      if (enabled) {
+        await cognito.send(new AdminEnableUserCommand({ UserPoolId: POOL, Username: u.Username }));
+      } else {
+        await cognito.send(new AdminUserGlobalSignOutCommand({ UserPoolId: POOL, Username: u.Username }));
+        await cognito.send(new AdminDisableUserCommand({ UserPoolId: POOL, Username: u.Username }));
+      }
+    }
+  } catch (e) { console.error("cognito sync failed", e); }
 }
 
 async function getNode(id) {
@@ -385,10 +448,20 @@ async function addComment(id, body, user) {
   return json(201, item);
 }
 
+function requireAdmin(user) {
+  if (!user.isAdmin) throw new HttpError(403, "Administrators only");
+}
+
+const ROLES = ["admin", "member"];
+
 async function invite(body, user) {
-  if (!user.isAdmin) throw new HttpError(403, "Admins only");
-  const email = String(body.email ?? "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new HttpError(400, "Invalid email");
+  requireAdmin(user);
+  const email = normEmail(body.email);
+  const role = body.role ?? "member";
+  if (!ROLES.includes(role)) throw new HttpError(400, "Invalid role");
+  if (OWNERS.includes(email) || (await getUserRec(email))) {
+    throw new HttpError(409, `${email} already has an account. Use the user list to change their role or restore access.`);
+  }
   try {
     await cognito.send(new AdminCreateUserCommand({
       UserPoolId: POOL,
@@ -397,10 +470,64 @@ async function invite(body, user) {
       DesiredDeliveryMediums: ["EMAIL"],
     }));
   } catch (e) {
-    if (e.name === "UsernameExistsException") throw new HttpError(409, `${email} already has access`);
-    throw e;
+    if (e.name !== "UsernameExistsException") throw e; // already has a password account: just grant access
   }
+  await ddb.send(new PutCommand({
+    TableName: USERS,
+    Item: { email, role, status: "active", invitedBy: user.email, invitedAt: new Date().toISOString() },
+    ConditionExpression: "attribute_not_exists(email)",
+  }));
   return json(201, { ok: true, email });
+}
+
+async function listUsers(user) {
+  requireAdmin(user);
+  const users = [];
+  let key;
+  do {
+    const r = await ddb.send(new ScanCommand({ TableName: USERS, ExclusiveStartKey: key }));
+    users.push(...(r.Items ?? []));
+    key = r.LastEvaluatedKey;
+  } while (key);
+  for (const o of OWNERS) {
+    if (!users.some((u) => u.email === o)) users.push({ email: o, role: "admin", status: "active" });
+  }
+  for (const u of users) if (OWNERS.includes(u.email)) { u.owner = true; u.role = "admin"; u.status = "active"; }
+  await decorate(users, [["email", "displayName"]]);
+  users.sort((a, b) => a.email.localeCompare(b.email));
+  return json(200, { users });
+}
+
+async function updateUser(rawEmail, body, user) {
+  requireAdmin(user);
+  const email = normEmail(rawEmail);
+  if (OWNERS.includes(email)) throw new HttpError(409, "Owners are managed in Terraform (admin_emails)");
+  if (email === user.email.toLowerCase()) throw new HttpError(409, "You can't change your own access");
+  const { role, status } = body;
+  if (role === undefined && status === undefined) throw new HttpError(400, "Nothing to change");
+  if (role !== undefined && !ROLES.includes(role)) throw new HttpError(400, "Invalid role");
+  if (status !== undefined && !["active", "disabled"].includes(status)) throw new HttpError(400, "Invalid status");
+  const rec = await getUserRec(email);
+  if (!rec) throw new HttpError(404, "User not found");
+
+  const sets = ["updatedAt = :t", "updatedBy = :u"];
+  const names = {};
+  const vals = { ":t": new Date().toISOString(), ":u": user.email };
+  if (role !== undefined) { sets.push("#r = :r"); names["#r"] = "role"; vals[":r"] = role; }
+  if (status !== undefined) {
+    sets.push("#s = :s"); names["#s"] = "status"; vals[":s"] = status;
+    if (status === "disabled") { sets.push("disabledAt = :t"); }
+  }
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: USERS,
+    Key: { email },
+    UpdateExpression: `SET ${sets.join(", ")}${status === "active" ? " REMOVE disabledAt" : ""}`,
+    ExpressionAttributeNames: Object.keys(names).length ? names : undefined,
+    ExpressionAttributeValues: vals,
+    ReturnValues: "ALL_NEW",
+  }));
+  if (status !== undefined && status !== rec.status) await setCognitoEnabled(email, status === "active");
+  return json(200, Attributes);
 }
 
 async function deleteComment(id, sk, user) {
@@ -419,7 +546,7 @@ async function deleteComment(id, sk, user) {
 
 async function getMe(user) {
   const { Item } = await ddb.send(new GetCommand({ TableName: PROFILES, Key: { email: emailOf(user) } }));
-  return json(200, { email: user.email, name: user.name, displayName: Item?.displayName, isAdmin: user.isAdmin });
+  return json(200, { email: user.email, name: user.name, displayName: Item?.displayName, isAdmin: user.isAdmin, role: user.role, owner: user.owner });
 }
 
 async function setProfile(body, user) {
@@ -443,6 +570,8 @@ const routes = [
   ["POST", /^\/(?:files|folders)\/([^/]+)\/restore$/, ([id], e, u) => restore(id, u)],
   ["DELETE", /^\/files\/([^/]+)\/comments\/([^/]+)$/, ([id, sk], e, u) => deleteComment(id, sk, u)],
   ["POST", /^\/invites$/, (_, e, u) => invite(parseBody(e), u)],
+  ["GET", /^\/users$/, (_, e, u) => listUsers(u)],
+  ["PUT", /^\/users\/([^/]+)$/, ([email], e, u) => updateUser(email, parseBody(e), u)],
   ["GET", /^\/folders\/([^/]+)\/contents$/, ([id]) => listFolder(id)],
   ["POST", /^\/folders$/, (_, e, u) => createFolder(parseBody(e), u)],
   ["DELETE", /^\/folders\/([^/]+)$/, ([id], e, u) => softDelete(id, "folder", u)],
@@ -480,6 +609,7 @@ export async function handler(event) {
     const path = event.rawPath.replace(/\/+$/, "") || "/";
     const user = userFrom(event);
     if (!user.id) throw new HttpError(401, "Unauthorized");
+    await authorize(user);
     for (const [m, re, fn] of routes) {
       const match = m === method && re.exec(path);
       if (match) return await fn(match.slice(1).map(decodeURIComponent), event, user);

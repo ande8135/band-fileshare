@@ -1,10 +1,13 @@
 import { CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 const cognito = new CognitoIdentityProviderClient({});
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const OWNERS = (process.env.ADMIN_EMAILS || "").split(",").filter(Boolean);
 
 // Invite-only: users are created by admins (AdminCreateUser). The only other way in is a
-// first-time federated (Google) login, which we allow only if an invited user with that
-// verified email already exists.
+// first-time federated (Google) login, which we allow only for an invited, active user.
 export async function handler(event) {
   switch (event.triggerSource) {
     case "PreSignUp_AdminCreateUser":
@@ -13,6 +16,14 @@ export async function handler(event) {
       const attrs = event.request.userAttributes;
       const email = String(attrs.email ?? "").toLowerCase();
       if (!email || String(attrs.email_verified) !== "true") throw new Error("Unverified email");
+      if (OWNERS.includes(email)) return event;
+
+      const { Item } = await ddb.send(new GetCommand({ TableName: process.env.USERS_TABLE, Key: { email } }));
+      if (Item) {
+        if (Item.status !== "active") throw new Error("Access has been removed for this email");
+        return event;
+      }
+      // Invited before the users table existed: fall back to an existing password account.
       const { Users = [] } = await cognito.send(new ListUsersCommand({
         UserPoolId: event.userPoolId,
         Filter: `email = "${email.replace(/["\\]/g, "")}"`,

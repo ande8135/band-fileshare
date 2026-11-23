@@ -28,6 +28,13 @@ All signed-in users share one workspace (everyone sees everything).
 
 Changing files in `web/` or `backend/` and re-running `terraform apply` redeploys them (CloudFront caching is disabled, so changes are live immediately).
 
+## Roles and user management
+
+- **Administrators** can invite people (as member or administrator), change roles, and **remove / restore access** from **Manage users** in the header. **Members** can use files, versions and comments but can't manage users.
+- `admin_emails` in Terraform are **owners**: permanent administrators who can't be demoted or removed in the app, so you can never lock yourself out.
+- The `users` table is checked on every API request, so removing someone takes effect immediately. Their Cognito logins are also disabled and sessions revoked (best effort), and Restore re-enables them. Removal is reversible (no records are deleted), and their past files and comments stay.
+- Anyone invited before roles existed is adopted automatically as a member the first time they make a request.
+
 ## Access: invite-only
 
 - `admin_emails` get an invitation email on `terraform apply` (temporary password, set a new one on first sign-in, or just use Google with that email).

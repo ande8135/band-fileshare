@@ -36,18 +36,22 @@ resource "aws_iam_role_policy" "api" {
       {
         Effect = "Allow"
         # Deliberately no DeleteItem: data is never hard-deleted, only flagged.
-        Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+        Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan"]
         Resource = [
           aws_dynamodb_table.nodes.arn,
           "${aws_dynamodb_table.nodes.arn}/index/*",
           aws_dynamodb_table.versions.arn,
           aws_dynamodb_table.comments.arn,
           aws_dynamodb_table.profiles.arn,
+          aws_dynamodb_table.users.arn,
         ]
       },
       {
-        Effect   = "Allow"
-        Action   = ["cognito-idp:AdminCreateUser"]
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:AdminCreateUser", "cognito-idp:ListUsers", "cognito-idp:AdminDisableUser",
+          "cognito-idp:AdminEnableUser", "cognito-idp:AdminUserGlobalSignOut",
+        ]
         Resource = aws_cognito_user_pool.main.arn
       },
       {
@@ -76,6 +80,7 @@ resource "aws_lambda_function" "api" {
       VERSIONS_TABLE  = aws_dynamodb_table.versions.name
       COMMENTS_TABLE  = aws_dynamodb_table.comments.name
       PROFILES_TABLE  = aws_dynamodb_table.profiles.name
+      USERS_TABLE     = aws_dynamodb_table.users.name
       FILES_BUCKET    = aws_s3_bucket.files.id
       PRESIGN_EXPIRY  = tostring(var.presign_expiry_seconds)
       USER_POOL_ID    = aws_cognito_user_pool.main.id
@@ -180,6 +185,11 @@ resource "aws_iam_role_policy" "presignup" {
         Resource = "${aws_cloudwatch_log_group.presignup.arn}:*"
       },
       {
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem"]
+        Resource = aws_dynamodb_table.users.arn
+      },
+      {
         # Wildcard pool id avoids a dependency cycle (the pool references this function).
         Effect   = "Allow"
         Action   = ["cognito-idp:ListUsers"]
@@ -197,6 +207,13 @@ resource "aws_lambda_function" "presignup" {
   filename         = data.archive_file.api.output_path
   source_code_hash = data.archive_file.api.output_base64sha256
   timeout          = 10
+
+  environment {
+    variables = {
+      USERS_TABLE  = aws_dynamodb_table.users.name
+      ADMIN_EMAILS = join(",", [for e in var.admin_emails : lower(e)])
+    }
+  }
 
   depends_on = [aws_cloudwatch_log_group.presignup, aws_iam_role_policy.presignup]
 }

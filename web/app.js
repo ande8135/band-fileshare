@@ -104,7 +104,7 @@ async function api(method, path, body) {
   });
   const data = await r.json().catch(() => ({}));
   if (r.status === 401) { store.clear(); login(); throw new Error("Session expired"); }
-  if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
+  if (!r.ok) throw Object.assign(new Error(data.error || `Request failed (${r.status})`), { status: r.status });
   return data;
 }
 
@@ -343,6 +343,57 @@ async function deleteFile() {
   try { await api("DELETE", `/files/${openFile.file.id}`); closePanel(); toast("Moved to trash"); await loadFolder(); } catch (e) { toast(e.message); }
 }
 
+// ---------------- user management (admins) ----------------
+async function openUsers() {
+  $("usersDlg").showModal();
+  await loadUsers();
+}
+
+async function loadUsers() {
+  try {
+    const { users } = await api("GET", "/users");
+    const rows = $("userRows");
+    rows.replaceChildren();
+    for (const u of users) {
+      const locked = u.owner || u.email.toLowerCase() === me.email.toLowerCase();
+      const off = u.status !== "active";
+      const role = locked
+        ? h("span", {}, "Administrator", u.owner ? h("span", { class: "badge owner" }, "owner") : null)
+        : h("select", { onchange: (e) => changeUser(u, { role: e.target.value }) },
+          h("option", { value: "member" }, "Member"), h("option", { value: "admin" }, "Administrator"));
+      if (!locked) role.value = u.role;
+      rows.append(h("tr", { class: "static" },
+        h("td", {}, u.displayName ? h("strong", {}, u.displayName) : null, u.displayName ? h("br") : null, h("span", { class: "muted" }, u.email)),
+        h("td", {}, role),
+        h("td", {}, off ? h("span", { class: "badge off" }, "removed") : "Active"),
+        h("td", { class: "act" }, locked ? null : off
+          ? h("button", { onclick: () => changeUser(u, { status: "active" }) }, "Restore")
+          : h("button", { class: "danger", onclick: () => removeUser(u) }, "Remove access"))));
+    }
+  } catch (e) { toast(e.message); }
+}
+
+async function changeUser(u, patch) {
+  try { await api("PUT", `/users/${encodeURIComponent(u.email)}`, patch); } catch (e) { toast(e.message); }
+  await loadUsers();
+}
+
+async function removeUser(u) {
+  if (!confirm(`Remove access for ${u.displayName || u.email}? They're signed out immediately. You can restore them later.`)) return;
+  await changeUser(u, { status: "disabled" });
+}
+
+async function inviteUser(e) {
+  e.preventDefault();
+  const email = $("inviteEmail").value.trim();
+  try {
+    await api("POST", "/invites", { email, role: $("inviteRole").value });
+    toast(`Invitation sent to ${email.toLowerCase()}`);
+    $("inviteEmail").value = "";
+  } catch (err) { toast(err.message); }
+  await loadUsers();
+}
+
 // ---------------- profile ----------------
 function showProfile(prefill) {
   $("profileEmail").textContent = me.email;
@@ -370,26 +421,28 @@ async function main() {
   const token = await idToken();
   if (!token) { $("login").hidden = false; return; }
 
-  const claims = jwt(token);
-  $("who").textContent = claims.email || claims.name || "";
+  $("logout").onclick = $("deniedOut").onclick = logout;
+  try {
+    const m = await api("GET", "/me");
+    me = { ...m, displayName: m.displayName || "" };
+  } catch (e) {
+    if (e.status !== 403) { toast(e.message); return; }
+    $("deniedMsg").textContent = e.message;
+    $("denied").hidden = false;
+    return;
+  }
+  $("who").textContent = me.displayName || me.email;
+  $("invite").hidden = !me.isAdmin;
   $("user").hidden = false;
   $("app").hidden = false;
-  $("logout").onclick = logout;
   $("profile").onclick = () => showProfile();
   $("profileForm").onsubmit = saveProfile;
   $("profileCancel").onclick = () => $("profileDlg").close();
   $("trashBtn").onclick = () => { location.hash = isTrash() ? "#/" : "#/trash"; };
-  api("GET", "/me").then((m) => {
-    me = { ...m, displayName: m.displayName || "" };
-    $("invite").hidden = !m.isAdmin;
-    $("who").textContent = me.displayName || me.email;
-    if (!me.displayName) showProfile(m.name !== m.email ? m.name : "");
-  }).catch(() => {});
-  $("invite").onclick = async () => {
-    const email = prompt("Email address to invite");
-    if (!email) return;
-    try { await api("POST", "/invites", { email }); toast(`Invitation sent to ${email.trim().toLowerCase()}`); } catch (e) { toast(e.message); }
-  };
+  if (!me.displayName) showProfile(me.name !== me.email ? me.name : "");
+  $("invite").onclick = openUsers;
+  $("usersClose").onclick = () => $("usersDlg").close();
+  $("inviteForm").onsubmit = inviteUser;
 
   $("newFolder").onclick = newFolder;
   $("upload").onclick = () => $("picker").click();

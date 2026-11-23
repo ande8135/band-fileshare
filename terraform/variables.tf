@@ -31,7 +31,7 @@ variable "google_client_secret" {
 }
 
 variable "admin_emails" {
-  description = "Admins: each gets an invitation email now and can invite others from the app (Invite button)."
+  description = "Owners: permanent administrators. Each gets an invitation email on apply. Other admins and members are managed in the app (Manage users); owners can't be demoted or removed there."
   type        = list(string)
 
   validation {

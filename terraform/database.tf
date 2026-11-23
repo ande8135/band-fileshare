@@ -102,3 +102,19 @@ resource "aws_dynamodb_table" "profiles" {
     enabled = true
   }
 }
+
+# Who may use the app and in which role (admin | member). Checked on every API request.
+resource "aws_dynamodb_table" "users" {
+  name         = "${local.name}-users"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "email"
+
+  attribute {
+    name = "email"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+}
