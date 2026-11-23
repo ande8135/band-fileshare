@@ -4,7 +4,7 @@
 }
 * { box-sizing: border-box; }
 body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
-header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+header { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); }
 h1 { font-size:18px; margin:0; } h2 { font-size:17px; margin:0; word-break:break-all; } h3 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 8px; }
 main { max-width:1000px; margin:20px auto; padding:0 16px; }
 .toolbar { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
@@ -56,3 +56,45 @@ dialog input { width:100%; margin:6px 0; }
 td.act { text-align:right; }
 #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#222; color:#fff; padding:8px 14px; border-radius:6px; opacity:0; pointer-events:none; transition:opacity .2s; max-width:90vw; }
 #toast.show { opacity:1; }
+
+#user { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+#crumbs { word-break:break-word; }
+
+/* ---------- small screens ---------- */
+@media (max-width: 640px) {
+  header { padding:10px 12px; }
+  h1 { font-size:16px; }
+  main { margin:12px auto; padding:0 10px; }
+  button, select { min-height:40px; }
+  button.link { min-height:36px; padding:2px 8px; }
+  input, textarea, select { font-size:16px; } /* stops iOS zooming into fields */
+  .toolbar { gap:8px; }
+  .actions { width:100%; }
+  .actions button { flex:1; padding:8px 6px; white-space:nowrap; }
+
+  /* table rows become cards: name on top, details underneath */
+  #drop { overflow:visible; }
+  table, tbody, tr, td { display:block; }
+  thead { display:none; }
+  tbody tr { position:relative; padding:10px 12px; border-bottom:1px solid var(--line); }
+  tbody tr:last-child { border-bottom:0; }
+  td { display:inline; border:0; padding:0 10px 0 0; color:var(--muted); font-size:13px; white-space:normal; }
+  td:empty { display:none; }
+  td:first-child { display:block; color:var(--fg); font-size:15px; padding:0 64px 3px 0; word-break:break-word; }
+  td.act { position:absolute; top:6px; right:8px; padding:0; }
+
+  /* file details become a full-screen sheet */
+  #panel { width:100vw; border-left:0; padding:14px 14px calc(24px + env(safe-area-inset-bottom)); }
+  #pClose { font-size:20px; min-width:44px; }
+  .row { gap:8px; }
+  #versions .row button, #cForm .row button { min-width:90px; }
+  #cForm .row { flex-wrap:nowrap; }
+
+  dialog { width:94vw; min-width:0; padding:14px; }
+  #usersDlg td.act { position:static; display:block; margin-top:6px; }
+  #usersDlg td:first-child { padding-right:0; }
+  #usersDlg .row { flex-wrap:wrap; }
+  #usersDlg .row input { flex:1 1 100%; }
+  #uploads li { flex-wrap:wrap; }
+  #toast { bottom:calc(16px + env(safe-area-inset-bottom)); }
+}
