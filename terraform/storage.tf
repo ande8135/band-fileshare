@@ -115,24 +115,52 @@ locals {
     ico  = "image/x-icon"
     png  = "image/png"
   }
-  web_files = toset([for f in fileset("${path.module}/../web", "**") : f if f != "config.js"])
+  web_files = toset([for f in fileset("${path.module}/../web", "**") : f if !contains(["config.js", "index.html"], f)])
+
+  # One version for all static assets; it changes whenever any of them changes.
+  asset_version = substr(md5(join("", [for f in sort(tolist(local.web_files)) : filemd5("${path.module}/../web/${f}")])), 0, 10)
 }
 
 resource "aws_s3_object" "site" {
   for_each = local.web_files
 
-  bucket       = aws_s3_bucket.site.id
-  key          = each.value
-  source       = "${path.module}/../web/${each.value}"
-  etag         = filemd5("${path.module}/../web/${each.value}")
-  content_type = lookup(local.content_types, reverse(split(".", each.value))[0], "application/octet-stream")
+  bucket        = aws_s3_bucket.site.id
+  key           = each.value
+  source        = "${path.module}/../web/${each.value}"
+  etag          = filemd5("${path.module}/../web/${each.value}")
+  content_type  = lookup(local.content_types, reverse(split(".", each.value))[0], "application/octet-stream")
+  cache_control = "public, max-age=31536000, immutable"
+}
+
+# index.html is served with no-cache and points at the current asset version. It also
+# preconnects to the API and Cognito so the first API call doesn't pay for a TLS handshake.
+resource "aws_s3_object" "index" {
+  bucket        = aws_s3_bucket.site.id
+  key           = "index.html"
+  content_type  = "text/html; charset=utf-8"
+  cache_control = "no-cache"
+  content = replace(
+    replace(
+      replace(
+        replace(
+          file("${path.module}/../web/index.html"),
+          "<!--PRECONNECT-->",
+          "<link rel=\"preconnect\" href=\"${aws_apigatewayv2_api.api.api_endpoint}\" crossorigin><link rel=\"preconnect\" href=\"https://${var.cognito_domain_prefix}.auth.${var.aws_region}.amazoncognito.com\" crossorigin>"
+        ),
+        "app.js\"", "app.js?v=${local.asset_version}\""
+      ),
+      "style.css\"", "style.css?v=${local.asset_version}\""
+    ),
+    "logo.png\"", "logo.png?v=${local.asset_version}\""
+  )
 }
 
 # Runtime config consumed by the static site (no secrets in here).
 resource "aws_s3_object" "config" {
-  bucket       = aws_s3_bucket.site.id
-  key          = "config.js"
-  content_type = "application/javascript; charset=utf-8"
+  bucket        = aws_s3_bucket.site.id
+  key           = "config.js"
+  content_type  = "application/javascript; charset=utf-8"
+  cache_control = "no-cache"
   content = <<-EOT
     window.APP_CONFIG = ${jsonencode({
   apiUrl        = aws_apigatewayv2_api.api.api_endpoint

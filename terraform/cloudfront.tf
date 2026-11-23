@@ -1,5 +1,27 @@
-data "aws_cloudfront_cache_policy" "disabled" {
-  name = "Managed-CachingDisabled"
+# Honours each object's Cache-Control: index.html/config.js revalidate every time, while
+# app.js/style.css/logo.png are requested as ?v=<content hash> and cached for a year.
+resource "aws_cloudfront_cache_policy" "site" {
+  name        = "${local.name}-site"
+  min_ttl     = 0
+  default_ttl = 0
+  max_ttl     = 31536000
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    cookies_config {
+      cookie_behavior = "none"
+    }
+    headers_config {
+      header_behavior = "none"
+    }
+    query_strings_config {
+      query_string_behavior = "whitelist"
+      query_strings {
+        items = ["v"]
+      }
+    }
+    enable_accept_encoding_brotli = true
+    enable_accept_encoding_gzip   = true
+  }
 }
 
 data "aws_cloudfront_response_headers_policy" "security" {
@@ -32,7 +54,7 @@ resource "aws_cloudfront_distribution" "site" {
     allowed_methods            = ["GET", "HEAD"]
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
-    cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
+    cache_policy_id            = aws_cloudfront_cache_policy.site.id
     response_headers_policy_id = data.aws_cloudfront_response_headers_policy.security.id
   }
 

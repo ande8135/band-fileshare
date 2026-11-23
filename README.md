@@ -26,7 +26,7 @@ All signed-in users share one workspace (everyone sees everything).
    ```
 3. Open the `site_url` output. Sign in with Google or create an email/password account.
 
-Changing files in `web/` or `backend/` and re-running `terraform apply` redeploys them (CloudFront caching is disabled, so changes are live immediately).
+Changing files in `web/` or `backend/` and re-running `terraform apply` redeploys them. `index.html` and `config.js` are served `no-cache`; `app.js`, `style.css` and `logo.png` are requested with a `?v=<content hash>` and cached for a year, so changes are live on the next page load without CloudFront invalidations.
 
 ## Roles and user management
 
@@ -41,6 +41,13 @@ Changing files in `web/` or `backend/` and re-running `terraform apply` redeploy
 - Admins see an **Invite people** button; it creates a Cognito user and emails them. Anyone else can't register: self-signup is off, and a pre-sign-up Lambda rejects first-time Google logins unless an invited user with that email exists.
 - To revoke someone: Cognito console → User pools → Users → delete (delete both the invited user and any Google-linked one with the same email). Current sessions stay valid until the 1h token expires.
 - Add/remove admins by editing `admin_emails` and re-applying.
+
+## Performance notes
+
+- The browser caches folder listings: going back to a folder renders instantly and refreshes in the background. Hovering a folder prefetches it, and duplicate requests for the same folder are merged.
+- The details panel opens immediately from the row's data and loads versions and comments in one request (`GET /files/{id}?include=comments`).
+- The API Lambda runs on arm64 with 1 GB of memory (Lambda CPU scales with memory), and independent DynamoDB reads run in parallel.
+- `index.html` preconnects to the API and Cognito so the first request skips the TLS handshake.
 
 ## Local development
 

@@ -72,7 +72,8 @@ resource "aws_lambda_function" "api" {
   filename         = data.archive_file.api.output_path
   source_code_hash = data.archive_file.api.output_base64sha256
   timeout          = 15
-  memory_size      = 256
+  memory_size      = 1024 # Lambda CPU scales with memory: faster cold starts and SDK calls
+  architectures    = ["arm64"]
 
   environment {
     variables = {
@@ -204,6 +205,8 @@ resource "aws_lambda_function" "presignup" {
   role             = aws_iam_role.presignup.arn
   runtime          = "nodejs22.x"
   handler          = "presignup.handler"
+  memory_size      = 512
+  architectures    = ["arm64"]
   filename         = data.archive_file.api.output_path
   source_code_hash = data.archive_file.api.output_base64sha256
   timeout          = 10

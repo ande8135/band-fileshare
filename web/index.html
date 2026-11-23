@@ -2,113 +2,65 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
   <title>VDI File Share</title>
+  <!--PRECONNECT-->
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="apple-touch-icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1><img src="logo.png" alt="" class="logo"> VDI File Share</h1>
-    <div id="user" hidden><button id="invite" hidden>Manage users</button> <button id="profile" class="link"><span id="who"></span> ✎</button> <button id="logout" class="link">Sign out</button></div>
-  </header>
-
-  <main id="app" hidden>
-    <div class="toolbar">
-      <nav id="crumbs" aria-label="Breadcrumbs"></nav>
-      <div class="actions">
-        <button id="trashBtn">🗑 Trash</button>
-        <button id="newFolder">New folder</button>
-        <button id="upload" class="primary">Upload files</button>
-        <input id="picker" type="file" multiple hidden>
+  <!-- Signed-in app shell -->
+  <div id="shell" hidden>
+    <nav id="side">
+      <div class="brand"><img src="logo.png" alt="" width="26" height="26"><span>VDI File Share</span></div>
+      <div class="nav" id="nav">
+        <a href="#/" data-view="files"><span class="i" data-icon="folder"></span><span>Files</span></a>
+        <a href="#/trash" data-view="trash"><span class="i" data-icon="trash"></span><span>Trash</span></a>
+        <a href="#/members" data-view="members" id="navMembers" hidden><span class="i" data-icon="users"></span><span>Members</span></a>
       </div>
-    </div>
-    <div id="drop">
-      <table>
-        <thead id="head"></thead>
-        <tbody id="rows"></tbody>
-      </table>
-      <p id="empty" class="muted" hidden>Empty folder. Drop files here or use Upload.</p>
-    </div>
-    <ul id="uploads"></ul>
-  </main>
+      <button id="me" class="me" aria-haspopup="menu"></button>
+    </nav>
 
-  <aside id="panel" hidden>
-    <div class="panel-head">
-      <h2 id="pName"></h2>
-      <button id="pClose" class="link" aria-label="Close">✕</button>
-    </div>
-    <section>
-      <h3>Versions</h3>
-      <ul id="versions"></ul>
-      <div class="row">
-        <button id="newVer">Upload new version</button>
-        <input id="verPicker" type="file" hidden>
-        <input id="verNote" placeholder="Note (optional)" maxlength="500">
+    <main id="main">
+      <div id="view"></div>
+    </main>
+  </div>
+
+  <aside id="panel" hidden aria-label="File details">
+    <div class="p-head" id="pHead"></div>
+    <div class="p-actions" id="pActions"></div>
+    <div class="tabs" id="pTabs" role="tablist"></div>
+    <div class="p-body" id="pBody"></div>
+    <form class="composer" id="composer">
+      <textarea id="cText" rows="1" maxlength="4000" placeholder="Write a comment…" aria-label="Comment"></textarea>
+      <div class="composer-row">
+        <select id="cVersion" aria-label="Comment applies to"></select>
+        <span class="hint">⌘↵ to send</span>
+        <button class="btn primary sm" id="cSend">Send</button>
       </div>
-    </section>
-    <section>
-      <h3>Comments</h3>
-      <label class="muted">Show <select id="cFilter"></select></label>
-      <ul id="comments"></ul>
-      <form id="cForm">
-        <textarea id="cText" rows="3" maxlength="4000" placeholder="Add a comment…" required></textarea>
-        <div class="row">
-          <label class="muted">On <select id="cVersion"></select></label>
-          <button class="primary">Post</button>
-        </div>
-      </form>
-    </section>
-    <section class="row"><button id="moveFile">Move to folder…</button><button id="delFile" class="danger">Move file to trash</button></section>
+    </form>
   </aside>
 
-  <dialog id="usersDlg">
-    <div class="panel-head"><h3>Users</h3><button id="usersClose" class="link" aria-label="Close">✕</button></div>
-    <form id="inviteForm" class="row">
-      <input id="inviteEmail" type="email" placeholder="Email to invite" required>
-      <select id="inviteRole"><option value="member">Member</option><option value="admin">Administrator</option></select>
-      <button class="primary">Invite</button>
-    </form>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
-        <tbody id="userRows"></tbody>
-      </table>
+  <div id="dropOverlay" hidden><div><span class="i" data-icon="upload"></span><p id="dropText">Drop to upload</p></div></div>
+  <div id="tray" hidden></div>
+  <input id="picker" type="file" multiple hidden>
+  <input id="verPicker" type="file" hidden>
+
+  <!-- Signed-out / blocked states -->
+  <div id="gate" class="gate" hidden>
+    <div class="gate-card">
+      <img src="logo.png" alt="Volcano Diving Inc" width="88" height="88">
+      <h1>VDI File Share</h1>
+      <p id="gateMsg">Sign in to access the shared files.<br>Access is by invitation only.</p>
+      <p id="gateErr" class="err"></p>
+      <button id="gateBtn" class="btn primary lg">Sign in</button>
     </div>
-    <p class="muted">Administrators can invite people, change roles and remove access. Members can use files and comments. Removing access takes effect immediately and can be undone with Restore.</p>
-  </dialog>
-
-  <dialog id="moveDlg">
-    <div class="panel-head"><h3 id="moveTitle">Move file</h3><button id="moveClose" class="link" aria-label="Close">✕</button></div>
-    <nav id="moveCrumbs" class="muted"></nav>
-    <ul id="moveList"></ul>
-    <div class="row"><button id="moveCancel">Cancel</button><button id="moveHere" class="primary">Move here</button></div>
-  </dialog>
-
-  <dialog id="profileDlg">
-    <form id="profileForm" method="dialog">
-      <h3>Your profile</h3>
-      <p class="muted" id="profileEmail"></p>
-      <label>Display name<br><input id="displayName" maxlength="60" required autocomplete="nickname"></label>
-      <p class="muted">Shown on your comments, uploads and edits.</p>
-      <div class="row"><button type="button" id="profileCancel">Cancel</button><button class="primary">Save</button></div>
-    </form>
-  </dialog>
-
-  <div id="denied" class="center" hidden>
-    <p id="deniedMsg"></p>
-    <button id="deniedOut">Sign out</button>
   </div>
 
-  <div id="login" class="center" hidden>
-    <img src="logo.png" alt="Volcano Diving Inc" class="logo-lg">
-    <h2>VDI File Share</h2>
-    <p>Sign in to access the shared files. Access is by invitation only.</p>
-    <p id="loginMsg" class="muted"></p>
-    <button id="loginBtn" class="primary">Sign in</button>
-  </div>
-  <div id="toast" role="status"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>

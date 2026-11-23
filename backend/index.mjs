@@ -136,14 +136,23 @@ const emailOf = (user) => (user.email || user.id).toLowerCase();
 
 // Display names live in the profiles table (keyed by lowercase email) and are resolved at read
 // time, so a name change shows up on everything the person ever did.
+const nameCache = new Map(); // email -> { name, at }; display names change rarely
+const NAME_TTL_MS = 60_000;
+
 async function displayNames(emails) {
-  const uniq = [...new Set(emails.filter(Boolean).map((e) => String(e).toLowerCase()))];
   const names = {};
+  const now = Date.now();
+  const uniq = [];
+  for (const e of new Set(emails.filter(Boolean).map((x) => String(x).toLowerCase()))) {
+    const hit = nameCache.get(e);
+    if (hit && now - hit.at < NAME_TTL_MS) { if (hit.name) names[e] = hit.name; } else uniq.push(e);
+  }
+  for (const e of uniq) nameCache.set(e, { name: undefined, at: now });
   for (let i = 0; i < uniq.length; i += 100) {
     let req = { [PROFILES]: { Keys: uniq.slice(i, i + 100).map((email) => ({ email })) } };
     for (let attempt = 0; attempt < 3 && Object.keys(req).length; attempt++) {
       const r = await ddb.send(new BatchGetCommand({ RequestItems: req }));
-      for (const p of r.Responses?.[PROFILES] ?? []) names[p.email] = p.displayName;
+      for (const p of r.Responses?.[PROFILES] ?? []) { names[p.email] = p.displayName; nameCache.set(p.email, { name: p.displayName, at: now }); }
       req = r.UnprocessedKeys ?? {};
     }
   }
@@ -244,12 +253,10 @@ async function startVersion(file, user, { contentType, size, note, fileName }) {
 
 // ---------- handlers ----------
 async function listFolder(id) {
-  let folder = null;
-  if (id !== "root") {
-    folder = await getNode(id);
-    if (!folder || folder.type !== "folder") throw new HttpError(404, "Folder not found");
-  }
-  const items = await decorate(await childrenOf(id), [["createdBy", "createdByName"], ["updatedBy", "updatedByName"]]);
+  // Folder lookup and child query don't depend on each other, so run them together.
+  const [folder, children] = await Promise.all([id === "root" ? null : getNode(id), childrenOf(id)]);
+  if (id !== "root" && (!folder || folder.type !== "folder" || folder.status !== "active")) throw new HttpError(404, "Folder not found");
+  const items = await decorate(children, [["createdBy", "createdByName"], ["updatedBy", "updatedByName"]]);
   return {
     folder,
     breadcrumbs: folder ? [...folder.ancestors, { id: folder.id, name: folder.name }] : [],
@@ -361,18 +368,30 @@ async function moveFile(id, body, user) {
   return json(200, { ok: true, parentId: parent.id });
 }
 
-async function getFileDetail(id) {
-  const file = await getFile(id);
-  const versions = await queryAll({
-    TableName: VERSIONS,
-    KeyConditionExpression: "fileId = :f",
-    FilterExpression: "#s = :c",
-    ExpressionAttributeNames: { "#s": "status" },
-    ExpressionAttributeValues: { ":f": id, ":c": "complete" },
-    ScanIndexForward: false,
-  });
-  await decorate(versions, [["uploadedBy", "uploadedByName"]]);
-  return json(200, { file, versions, breadcrumbs: file.ancestors });
+const queryComments = (id) => queryAll({
+  TableName: COMMENTS,
+  KeyConditionExpression: "fileId = :f",
+  FilterExpression: "attribute_not_exists(deletedAt)",
+  ExpressionAttributeValues: { ":f": id },
+});
+
+// ?include=comments returns the comments too, so the details panel needs one request instead of two.
+async function getFileDetail(id, withComments) {
+  const [file, versions, comments] = await Promise.all([
+    getFile(id),
+    queryAll({
+      TableName: VERSIONS,
+      KeyConditionExpression: "fileId = :f",
+      FilterExpression: "#s = :c",
+      ExpressionAttributeNames: { "#s": "status" },
+      ExpressionAttributeValues: { ":f": id, ":c": "complete" },
+      ScanIndexForward: false,
+    }),
+    withComments ? queryComments(id) : null,
+  ]);
+  await decorate([...versions, ...(comments ?? [])], [["uploadedBy", "uploadedByName"], ["author", "authorName"]]);
+  for (const c of comments ?? []) delete c.history;
+  return json(200, { file, versions, breadcrumbs: file.ancestors, ...(comments && { comments }) });
 }
 
 async function newVersion(id, body, user) {
@@ -442,13 +461,7 @@ async function downloadUrl(id, version) {
 }
 
 async function listComments(id) {
-  await getFile(id);
-  const comments = await queryAll({
-    TableName: COMMENTS,
-    KeyConditionExpression: "fileId = :f",
-    FilterExpression: "attribute_not_exists(deletedAt)",
-    ExpressionAttributeValues: { ":f": id },
-  });
+  const [, comments] = await Promise.all([getFile(id), queryComments(id)]);
   await decorate(comments, [["author", "authorName"]]);
   for (const c of comments) delete c.history;
   return json(200, { comments });
@@ -611,6 +624,7 @@ async function setProfile(body, user) {
     TableName: PROFILES,
     Item: { email: emailOf(user), displayName, updatedAt: new Date().toISOString() },
   }));
+  nameCache.set(emailOf(user), { name: displayName, at: Date.now() });
   return json(200, { displayName });
 }
 
@@ -629,7 +643,7 @@ const routes = [
   ["POST", /^\/folders$/, (_, e, u) => createFolder(parseBody(e), u)],
   ["DELETE", /^\/folders\/([^/]+)$/, ([id], e, u) => softDelete(id, "folder", u)],
   ["POST", /^\/files$/, (_, e, u) => createFile(parseBody(e), u)],
-  ["GET", /^\/files\/([^/]+)$/, ([id]) => getFileDetail(id)],
+  ["GET", /^\/files\/([^/]+)$/, ([id], e) => getFileDetail(id, e.queryStringParameters?.include === "comments")],
   ["DELETE", /^\/files\/([^/]+)$/, ([id], e, u) => softDelete(id, "file", u)],
   ["POST", /^\/files\/([^/]+)\/move$/, ([id], e, u) => moveFile(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions$/, ([id], e, u) => newVersion(id, parseBody(e), u)],
