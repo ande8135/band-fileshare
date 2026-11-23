@@ -406,6 +406,18 @@ async function main() {
   for (const ev of ["dragleave", "drop"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); });
   drop.addEventListener("drop", (e) => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
 
+  // Click outside the side panel dismisses it. mousedown (not click) so targets that get
+  // re-rendered by their own click handler are still attached when we check. Clicking another
+  // file row is left alone: it swaps the panel's contents.
+  document.addEventListener("mousedown", (e) => {
+    if ($("panel").hidden) return;
+    if (e.target.closest("#panel, #rows tr[data-id], dialog")) return;
+    closePanel();
+  });
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("panel").hidden && !document.querySelector("dialog[open]")) closePanel();
+  });
+
   addEventListener("hashchange", refresh);
   await refresh();
 }
