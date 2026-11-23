@@ -96,6 +96,10 @@ resource "aws_cognito_user_pool_client" "web" {
 resource "aws_cognito_user" "admin" {
   for_each = toset([for e in var.admin_emails : lower(e)])
 
+  # AdminCreateUser invokes the pre-sign-up Lambda, which Cognito may only call once this
+  # permission exists. The permission needs the pool ARN, so it can't be created earlier.
+  depends_on = [aws_lambda_permission.presignup]
+
   user_pool_id             = aws_cognito_user_pool.main.id
   username                 = each.value
   desired_delivery_mediums = ["EMAIL"]
