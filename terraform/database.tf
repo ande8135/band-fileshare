@@ -40,8 +40,15 @@ resource "aws_dynamodb_table" "nodes" {
     projection_type = "ALL"
   }
 
+  deletion_protection_enabled = true
+
   point_in_time_recovery {
     enabled = true
+  }
+
+  # Holds user data: Terraform refuses any plan that would delete or replace this.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -61,8 +68,15 @@ resource "aws_dynamodb_table" "versions" {
     type = "N"
   }
 
+  deletion_protection_enabled = true
+
   point_in_time_recovery {
     enabled = true
+  }
+
+  # Holds user data: Terraform refuses any plan that would delete or replace this.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -82,8 +96,15 @@ resource "aws_dynamodb_table" "comments" {
     type = "S"
   }
 
+  deletion_protection_enabled = true
+
   point_in_time_recovery {
     enabled = true
+  }
+
+  # Holds user data: Terraform refuses any plan that would delete or replace this.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -98,8 +119,15 @@ resource "aws_dynamodb_table" "profiles" {
     type = "S"
   }
 
+  deletion_protection_enabled = true
+
   point_in_time_recovery {
     enabled = true
+  }
+
+  # Holds user data: Terraform refuses any plan that would delete or replace this.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -114,7 +142,14 @@ resource "aws_dynamodb_table" "users" {
     type = "S"
   }
 
+  deletion_protection_enabled = true
+
   point_in_time_recovery {
     enabled = true
+  }
+
+  # Holds user data: Terraform refuses any plan that would delete or replace this.
+  lifecycle {
+    prevent_destroy = true
   }
 }

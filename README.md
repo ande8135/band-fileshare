@@ -66,7 +66,7 @@ Nothing is ever hard-deleted:
 - **Trash** (button in the toolbar) lists deleted files and folders with a **Restore** button. A file's parent folder must be active (restore the folder first) and its name must be free.
 - All file versions stay in S3 (bucket versioning is also on), and the API Lambda's IAM role has no `s3:DeleteObject` / `dynamodb:DeleteItem`, so even a bug can't remove data.
 - Deleted comments are hidden but kept in the `comments` table (`deletedAt` set); clear that attribute in the DynamoDB console to bring one back. Users can only edit or delete their own comments. Edited comments show "(edited)", and each previous version of the text is kept in the comment's `history` attribute.
-- There is intentionally no permanent purge. `terraform destroy` won't remove the file bucket while it holds objects.
+- There is intentionally no permanent purge. The file bucket, all DynamoDB tables and the Cognito user pool have `prevent_destroy` (Terraform errors rather than deleting or replacing them), DynamoDB deletion protection and Cognito deletion protection are on, and the tables have point-in-time recovery (35 days). To ever tear the stack down you'd have to remove those deliberately.
 
 ## Profiles and file names
 

@@ -3,6 +3,11 @@
 # ---------------------------------------------------------------------------
 resource "aws_s3_bucket" "files" {
   bucket = "${local.name}-files-${data.aws_caller_identity.current.account_id}"
+
+  # Holds every uploaded file version: Terraform refuses any plan that would delete it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "files" {
@@ -130,6 +135,14 @@ resource "aws_s3_object" "site" {
   etag          = filemd5("${path.module}/../web/${each.value}")
   content_type  = lookup(local.content_types, reverse(split(".", each.value))[0], "application/octet-stream")
   cache_control = "public, max-age=31536000, immutable"
+}
+
+# index.html used to be one of the aws_s3_object.site objects. Without this, Terraform would
+# delete that object and create this one in parallel; both use the same key, so the delete
+# could remove the new page. "moved" turns it into a plain in-place update.
+moved {
+  from = aws_s3_object.site["index.html"]
+  to   = aws_s3_object.index
 }
 
 # index.html is served with no-cache and points at the current asset version. It also

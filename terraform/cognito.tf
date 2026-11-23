@@ -1,5 +1,11 @@
 resource "aws_cognito_user_pool" "main" {
-  name = "${local.name}-users"
+  name                = "${local.name}-users"
+  deletion_protection = "ACTIVE"
+
+  # Replacing the pool would sign everyone out and lose every account. Refuse instead.
+  lifecycle {
+    prevent_destroy = true
+  }
 
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
