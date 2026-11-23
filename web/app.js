@@ -170,7 +170,7 @@ function confirmDialog(message, { title = "Are you sure?", ok = "Confirm", dange
   });
 }
 
-function promptDialog({ title, label, value = "", ok = "Save", placeholder = "", hint = "" }) {
+function promptDialog({ title, label, value = "", ok = "Save", placeholder = "", hint = "", selectBase = false }) {
   return new Promise((resolve) => {
     let result = null;
     const input = h("input", { class: "input", value, placeholder, maxlength: "255", "aria-label": label });
@@ -180,7 +180,10 @@ function promptDialog({ title, label, value = "", ok = "Save", placeholder = "",
       title, body: form, cls: "sm", onClose: () => resolve(result),
       actions: [btn("Cancel", { onClick: () => dlg.close() }), btn(ok, { kind: "primary", onClick: () => form.requestSubmit() })],
     });
-    input.focus(); input.select();
+    input.focus();
+    // For file names, pre-select just the part before the extension, like Finder does.
+    const dot = selectBase ? value.lastIndexOf(".") : -1;
+    if (dot > 0) input.setSelectionRange(0, dot); else input.select();
   });
 }
 
@@ -475,6 +478,7 @@ function fileRow(f) {
   () => [
     { label: "Open details", icon: "message", onClick: open },
     { label: "Download", icon: "download", onClick: () => download(f.id, f.currentVersion) },
+    { label: "Rename…", icon: "edit", onClick: () => renameFile(f) },
     { label: "Move to folder…", icon: "folderMove", onClick: () => openMove(f) },
     "-", { label: "Move to trash", icon: "trash", danger: true, onClick: () => deleteFile(f) },
   ]);
@@ -515,6 +519,24 @@ async function download(id, version) {
   try {
     const { url } = await api("GET", `/files/${id}/versions/${version}/download`);
     location.assign(url);
+  } catch (e) { fail(e); }
+}
+
+async function renameFile(f) {
+  const name = await promptDialog({ title: "Rename file", label: "Name", value: f.name, ok: "Rename", selectBase: true });
+  if (!name || name === f.name) return;
+  const ext = (n) => (/\.([^.]+)$/.exec(n)?.[1] ?? "").toLowerCase();
+  if (ext(name) !== ext(f.name) && !await confirmDialog(
+    ext(name) ? `Change the extension from “.${ext(f.name) || "none"}” to “.${ext(name)}”? The file may open differently.`
+      : `Remove the “.${ext(f.name)}” extension? The file may not open correctly.`,
+    { title: "Change file extension?", ok: "Change it" })) return;
+  try {
+    const updated = await api("POST", `/files/${f.id}/rename`, { name });
+    invalidate(f.parentId);
+    fileCache.delete(f.id);
+    if (panel.file?.id === f.id) { panel.file = { ...panel.file, ...updated }; drawPanel(); }
+    toast(`Renamed to “${updated.name}”`);
+    await reload();
   } catch (e) { fail(e); }
 }
 
@@ -657,6 +679,7 @@ function drawPanel() {
     btn("Download", { icon: "download", kind: "primary", size: "sm", onClick: () => download(file.id, file.currentVersion) }),
     btn("New version", { icon: "upload", size: "sm", onClick: () => uploadVersionDialog() }),
     btn("", { icon: "more", size: "sm", title: "More", onClick: (e) => menu(e.currentTarget, [
+      { label: "Rename…", icon: "edit", onClick: () => renameFile(file) },
       { label: "Move to folder…", icon: "folderMove", onClick: () => openMove(file) },
       "-", { label: "Move to trash", icon: "trash", danger: true, onClick: () => deleteFile(file) }]) }));
 

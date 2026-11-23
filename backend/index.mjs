@@ -343,6 +343,35 @@ async function createFile(body, user) {
   return json(201, { file, ...v });
 }
 
+async function renameFile(id, body, user) {
+  const file = await getFile(id);
+  if (file.status !== "active") throw new HttpError(409, "File isn't available to rename");
+  const name = cleanName(body.name);
+  if (name === file.name) return json(200, file);
+  // A case-only change ("song.gp" -> "Song.gp") can't clash with anything but itself.
+  if (name.toLowerCase() !== file.nameLower) await assertNameFree(file.parentId, name, "file");
+  const now = new Date().toISOString();
+  try {
+    const { Attributes } = await ddb.send(new UpdateCommand({
+      TableName: NODES,
+      Key: { id },
+      ConditionExpression: "#s = :a AND #n = :old",
+      // Previous names are kept, in line with "nothing is ever destroyed".
+      UpdateExpression: "SET #n = :n, nameLower = :nl, renamedAt = :t, renamedBy = :u, nameHistory = list_append(if_not_exists(nameHistory, :empty), :prev)",
+      ExpressionAttributeNames: { "#s": "status", "#n": "name" },
+      ExpressionAttributeValues: {
+        ":a": "active", ":old": file.name, ":n": name, ":nl": name.toLowerCase(), ":t": now,
+        ":u": user.email || user.id, ":empty": [], ":prev": [{ name: file.name, until: now }],
+      },
+      ReturnValues: "ALL_NEW",
+    }));
+    return json(200, Attributes);
+  } catch (e) {
+    if (e.name === "ConditionalCheckFailedException") throw new HttpError(409, "The file changed while renaming. Refresh and try again.");
+    throw e;
+  }
+}
+
 async function moveFile(id, body, user) {
   const file = await getFile(id);
   if (file.status !== "active") throw new HttpError(409, "File isn't available to move");
@@ -453,7 +482,7 @@ async function downloadUrl(id, version) {
       Bucket: BUCKET,
       Key: ver.s3Key,
       ResponseContentType: ver.contentType,
-      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(ver.originalName || file.name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())}`,
+      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())}`,
     }),
     { expiresIn: EXPIRY },
   );
@@ -645,6 +674,7 @@ const routes = [
   ["POST", /^\/files$/, (_, e, u) => createFile(parseBody(e), u)],
   ["GET", /^\/files\/([^/]+)$/, ([id], e) => getFileDetail(id, e.queryStringParameters?.include === "comments")],
   ["DELETE", /^\/files\/([^/]+)$/, ([id], e, u) => softDelete(id, "file", u)],
+  ["POST", /^\/files\/([^/]+)\/rename$/, ([id], e, u) => renameFile(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/move$/, ([id], e, u) => moveFile(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions$/, ([id], e, u) => newVersion(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions\/(\d+)\/complete$/, ([id, v], e, u) => completeVersion(id, Number(v), u)],
