@@ -125,6 +125,16 @@ resource "aws_apigatewayv2_route" "api" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
+# Preflight requests carry no Authorization header. Without this unauthenticated OPTIONS route the
+# ANY route above (JWT-protected) catches them and returns 401. With it, API Gateway answers
+# preflights itself from cors_configuration.
+resource "aws_apigatewayv2_route" "options" {
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = "OPTIONS /{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.api.id}"
+  authorization_type = "NONE"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.api.id
   name        = "$default"
