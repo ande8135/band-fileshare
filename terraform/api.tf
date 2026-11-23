@@ -73,13 +73,14 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      NODES_TABLE    = aws_dynamodb_table.nodes.name
-      VERSIONS_TABLE = aws_dynamodb_table.versions.name
-      COMMENTS_TABLE = aws_dynamodb_table.comments.name
-      FILES_BUCKET   = aws_s3_bucket.files.id
-      PRESIGN_EXPIRY = tostring(var.presign_expiry_seconds)
-      USER_POOL_ID   = aws_cognito_user_pool.main.id
-      ADMIN_EMAILS   = join(",", [for e in var.admin_emails : lower(e)])
+      NODES_TABLE     = aws_dynamodb_table.nodes.name
+      VERSIONS_TABLE  = aws_dynamodb_table.versions.name
+      COMMENTS_TABLE  = aws_dynamodb_table.comments.name
+      FILES_BUCKET    = aws_s3_bucket.files.id
+      PRESIGN_EXPIRY  = tostring(var.presign_expiry_seconds)
+      USER_POOL_ID    = aws_cognito_user_pool.main.id
+      ALLOWED_ORIGINS = join(",", local.allowed_origins)
+      ADMIN_EMAILS    = join(",", [for e in var.admin_emails : lower(e)])
     }
   }
 

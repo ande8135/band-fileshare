@@ -372,9 +372,27 @@ const routes = [
   ["POST", /^\/files\/([^/]+)\/comments$/, ([id], e, u) => addComment(id, parseBody(e), u)],
 ];
 
+// Normally API Gateway answers preflights itself from its CORS config; this is a safety net
+// in case an OPTIONS request is ever routed to the function.
+function preflight(event) {
+  const origin = event.headers?.origin;
+  const allowed = (process.env.ALLOWED_ORIGINS || "").split(",");
+  if (!origin || !allowed.includes(origin)) return { statusCode: 403, body: "" };
+  return {
+    statusCode: 204,
+    headers: {
+      "access-control-allow-origin": origin,
+      "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+      "access-control-allow-headers": "authorization,content-type",
+      "access-control-max-age": "3600",
+    },
+  };
+}
+
 export async function handler(event) {
   try {
     const method = event.requestContext.http.method;
+    if (method === "OPTIONS") return preflight(event);
     const path = event.rawPath.replace(/\/+$/, "") || "/";
     const user = userFrom(event);
     if (!user.id) throw new HttpError(401, "Unauthorized");
