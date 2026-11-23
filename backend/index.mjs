@@ -188,7 +188,7 @@ const childrenOf = (parentId, filter = true) =>
 async function resolveParent(parentId) {
   if (!parentId || parentId === "root") return { id: "root", ancestors: [] };
   const p = await getNode(parentId);
-  if (!p || p.type !== "folder") throw new HttpError(404, "Parent folder not found");
+  if (!p || p.type !== "folder" || p.status !== "active") throw new HttpError(404, "Parent folder not found");
   return { id: p.id, ancestors: [...p.ancestors, { id: p.id, name: p.name }] };
 }
 
@@ -334,6 +334,31 @@ async function createFile(body, user) {
   await ddb.send(new PutCommand({ TableName: NODES, Item: file }));
   const v = await startVersion(file, user, { contentType, size: body.size, note: body.note, fileName: name });
   return json(201, { file, ...v });
+}
+
+async function moveFile(id, body, user) {
+  const file = await getFile(id);
+  if (file.status !== "active") throw new HttpError(409, "File isn't available to move");
+  const parent = await resolveParent(body.parentId);
+  if (parent.id === file.parentId) throw new HttpError(400, "File is already in that folder");
+  await assertNameFree(parent.id, file.name, "file");
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: NODES,
+      Key: { id },
+      ConditionExpression: "#s = :a AND parentId = :old",
+      UpdateExpression: "SET parentId = :p, ancestors = :anc, movedAt = :t, movedBy = :u",
+      ExpressionAttributeNames: { "#s": "status" },
+      ExpressionAttributeValues: {
+        ":a": "active", ":old": file.parentId, ":p": parent.id, ":anc": parent.ancestors,
+        ":t": new Date().toISOString(), ":u": user.email || user.id,
+      },
+    }));
+  } catch (e) {
+    if (e.name === "ConditionalCheckFailedException") throw new HttpError(409, "The file changed while moving. Refresh and try again.");
+    throw e;
+  }
+  return json(200, { ok: true, parentId: parent.id });
 }
 
 async function getFileDetail(id) {
@@ -578,6 +603,7 @@ const routes = [
   ["POST", /^\/files$/, (_, e, u) => createFile(parseBody(e), u)],
   ["GET", /^\/files\/([^/]+)$/, ([id]) => getFileDetail(id)],
   ["DELETE", /^\/files\/([^/]+)$/, ([id], e, u) => softDelete(id, "file", u)],
+  ["POST", /^\/files\/([^/]+)\/move$/, ([id], e, u) => moveFile(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions$/, ([id], e, u) => newVersion(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions\/(\d+)\/complete$/, ([id, v], e, u) => completeVersion(id, Number(v), u)],
   ["GET", /^\/files\/([^/]+)\/versions\/(\d+)\/download$/, ([id, v]) => downloadUrl(id, Number(v))],

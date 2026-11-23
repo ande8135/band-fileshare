@@ -135,6 +135,62 @@ const setHead = (...cols) => $("head").replaceChildren(h("tr", {}, cols.map((c) 
 const personName = (name, email) => name || email || "";
 
 // ---------------- folder view ----------------
+// ---------------- moving files ----------------
+const DRAG_TYPE = "application/x-vdi-file";
+
+// Makes el accept a dragged file row and move that file into folder targetId.
+function dropTarget(el, targetId) {
+  const ours = (e) => [...(e.dataTransfer?.types ?? [])].includes(DRAG_TYPE);
+  el.addEventListener("dragover", (e) => { if (!ours(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; el.classList.add("drop-target"); });
+  el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+  el.addEventListener("drop", (e) => {
+    el.classList.remove("drop-target");
+    if (!ours(e)) return;
+    e.preventDefault();
+    const f = JSON.parse(e.dataTransfer.getData(DRAG_TYPE));
+    if (f.parentId !== targetId) moveFile(f, targetId);
+  });
+  return el;
+}
+
+async function moveFile(f, targetId) {
+  try {
+    await api("POST", `/files/${f.id}/move`, { parentId: targetId });
+    toast(`Moved "${f.name}"`);
+    if (openFile?.file.id === f.id) closePanel();
+    await refresh();
+  } catch (e) { toast(e.message); }
+}
+
+let pick = null; // { file, target }
+async function openMove() {
+  pick = { file: openFile.file, target: openFile.file.parentId };
+  $("moveTitle").textContent = `Move “${pick.file.name}”`;
+  $("moveDlg").showModal();
+  await loadPicker(pick.target);
+}
+
+async function loadPicker(id) {
+  try {
+    const d = await api("GET", `/folders/${id}/contents`);
+    pick.target = id;
+    const crumbs = $("moveCrumbs");
+    crumbs.replaceChildren(h("a", { onclick: () => loadPicker("root") }, "Home"));
+    for (const c of d.breadcrumbs) crumbs.append(h("span", {}, "/"), h("a", { onclick: () => loadPicker(c.id) }, c.name));
+    const list = $("moveList");
+    list.replaceChildren();
+    for (const f of d.folders) list.append(h("li", { onclick: () => loadPicker(f.id) }, "📁 " + f.name));
+    if (!d.folders.length) list.append(h("li", { class: "muted" }, "No subfolders here."));
+    $("moveHere").disabled = id === pick.file.parentId;
+  } catch (e) { toast(e.message); }
+}
+
+async function confirmMove() {
+  const { file, target } = pick;
+  $("moveDlg").close();
+  await moveFile(file, target);
+}
+
 async function loadTrash() {
   closePanel();
   const { items } = await api("GET", "/trash");
@@ -177,18 +233,21 @@ async function loadFolder() {
   folderId = route();
   const d = await api("GET", `/folders/${folderId}/contents`);
   const crumbs = $("crumbs");
-  crumbs.replaceChildren(h("a", { href: "#/" }, "Home"));
-  for (const c of d.breadcrumbs) crumbs.append(h("span", {}, "/"), h("a", { href: `#/folder/${c.id}` }, c.name));
+  crumbs.replaceChildren(dropTarget(h("a", { href: "#/" }, "Home"), "root"));
+  for (const c of d.breadcrumbs) crumbs.append(h("span", {}, "/"), dropTarget(h("a", { href: `#/folder/${c.id}` }, c.name), c.id));
 
   const rows = $("rows");
   rows.replaceChildren();
   for (const f of d.folders) {
-    rows.append(h("tr", { onclick: () => { closePanel(); location.hash = `#/folder/${f.id}`; } },
+    rows.append(dropTarget(h("tr", { onclick: () => { closePanel(); location.hash = `#/folder/${f.id}`; } },
       h("td", {}, "📁 " + f.name), h("td"), h("td"), h("td", {}, fmtDate(f.createdAt)), h("td", {}, personName(f.createdByName, f.createdBy)),
-      h("td", { class: "act" }, h("button", { class: "link", title: "Move to trash", onclick: (e) => { e.stopPropagation(); deleteFolder(f); } }, "🗑"))));
+      h("td", { class: "act" }, h("button", { class: "link", title: "Move to trash", onclick: (e) => { e.stopPropagation(); deleteFolder(f); } }, "🗑"))), f.id));
   }
   for (const f of d.files) {
-    rows.append(h("tr", { "data-id": f.id, onclick: () => showFile(f.id) },
+    rows.append(h("tr", { "data-id": f.id, draggable: "true", onclick: () => showFile(f.id), ondragstart: (e) => {
+        e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id: f.id, name: f.name, parentId: f.parentId }));
+        e.dataTransfer.effectAllowed = "move";
+      } },
       h("td", {}, "📄 " + f.name), h("td", {}, "v" + f.currentVersion),
       h("td", {}, fmtSize(f.size)), h("td", {}, fmtDate(f.updatedAt)), h("td", {}, personName(f.updatedByName, f.updatedBy)), h("td")));
   }
@@ -453,10 +512,14 @@ async function main() {
   $("cFilter").onchange = renderComments;
   $("cForm").onsubmit = postComment;
   $("delFile").onclick = deleteFile;
+  $("moveFile").onclick = openMove;
+  $("moveHere").onclick = confirmMove;
+  $("moveCancel").onclick = $("moveClose").onclick = () => $("moveDlg").close();
 
   const drop = $("drop");
-  for (const ev of ["dragenter", "dragover"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });
-  for (const ev of ["dragleave", "drop"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); });
+  const hasOsFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+  for (const ev of ["dragenter", "dragover"]) drop.addEventListener(ev, (e) => { if (!hasOsFiles(e)) return; e.preventDefault(); drop.classList.add("over"); });
+  for (const ev of ["dragleave", "drop"]) drop.addEventListener(ev, (e) => { if (!hasOsFiles(e)) return; e.preventDefault(); drop.classList.remove("over"); });
   drop.addEventListener("drop", (e) => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
 
   // Click outside the side panel dismisses it. mousedown (not click) so targets that get

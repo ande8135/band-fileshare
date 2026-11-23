@@ -60,7 +60,7 @@
         </div>
       </form>
     </section>
-    <section><button id="delFile" class="danger">Move file to trash</button></section>
+    <section class="row"><button id="moveFile">Move to folder…</button><button id="delFile" class="danger">Move file to trash</button></section>
   </aside>
 
   <dialog id="usersDlg">
@@ -77,6 +77,13 @@
       </table>
     </div>
     <p class="muted">Administrators can invite people, change roles and remove access. Members can use files and comments. Removing access takes effect immediately and can be undone with Restore.</p>
+  </dialog>
+
+  <dialog id="moveDlg">
+    <div class="panel-head"><h3 id="moveTitle">Move file</h3><button id="moveClose" class="link" aria-label="Close">✕</button></div>
+    <nav id="moveCrumbs" class="muted"></nav>
+    <ul id="moveList"></ul>
+    <div class="row"><button id="moveCancel">Cancel</button><button id="moveHere" class="primary">Move here</button></div>
   </dialog>
 
   <dialog id="profileDlg">

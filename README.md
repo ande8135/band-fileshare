@@ -69,6 +69,6 @@ Nothing is ever hard-deleted:
 ## Notes / limits
 
 - Uploads use a single presigned PUT (max 5 GB per file).
-- Folders can only be deleted when empty; there is no rename/move yet.
+- Folders can only be deleted when empty; there is no rename yet.
 - A Google user and an email/password user with the same address are separate Cognito users (comments show the email either way). Linking them needs a pre-signup Lambda trigger.
 - Terraform state holds the Google client secret; use a remote, encrypted backend for real use.

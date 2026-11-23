@@ -105,6 +105,19 @@ td.act { text-align: right; }
 #uploads li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 6px; background: var(--raised); border-radius: 8px; }
 #uploads progress { flex: 1; height: 6px; }
 
+/* drag-and-drop move */
+tbody tr[draggable="true"] { cursor: grab; }
+tr.drop-target, #crumbs a.drop-target { background: color-mix(in srgb, var(--accent) 16%, transparent); outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 4px; }
+#moveDlg { width: min(420px, 94vw); }
+#moveCrumbs { margin-bottom: 10px; word-break: break-word; }
+#moveCrumbs a { color: var(--accent-text); cursor: pointer; }
+#moveCrumbs span { margin: 0 5px; }
+#moveList { max-height: 40vh; overflow: auto; margin: 0 0 14px; }
+#moveList li { padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+#moveList li:hover { background: var(--raised); }
+#moveList li.muted { cursor: default; }
+#moveList li.muted:hover { background: none; }
+
 /* ---------- details panel ---------- */
 #panel {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw);
