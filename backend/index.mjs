@@ -343,58 +343,103 @@ async function createFile(body, user) {
   return json(201, { file, ...v });
 }
 
-async function renameFile(id, body, user) {
-  const file = await getFile(id);
-  if (file.status !== "active") throw new HttpError(409, "File isn't available to rename");
-  const name = cleanName(body.name);
-  if (name === file.name) return json(200, file);
-  // A case-only change ("song.gp" -> "Song.gp") can't clash with anything but itself.
-  if (name.toLowerCase() !== file.nameLower) await assertNameFree(file.parentId, name, "file");
-  const now = new Date().toISOString();
-  try {
-    const { Attributes } = await ddb.send(new UpdateCommand({
-      TableName: NODES,
-      Key: { id },
-      ConditionExpression: "#s = :a AND #n = :old",
-      // Previous names are kept, in line with "nothing is ever destroyed".
-      UpdateExpression: "SET #n = :n, nameLower = :nl, renamedAt = :t, renamedBy = :u, nameHistory = list_append(if_not_exists(nameHistory, :empty), :prev)",
-      ExpressionAttributeNames: { "#s": "status", "#n": "name" },
-      ExpressionAttributeValues: {
-        ":a": "active", ":old": file.name, ":n": name, ":nl": name.toLowerCase(), ":t": now,
-        ":u": user.email || user.id, ":empty": [], ":prev": [{ name: file.name, until: now }],
-      },
-      ReturnValues: "ALL_NEW",
+// ---------- rename / move (files and folders) ----------
+async function getActiveNode(id, type) {
+  const n = await getNode(id);
+  if (!n || n.type !== type || n.status !== "active") {
+    throw new HttpError(404, `${type === "file" ? "File" : "Folder"} not found`);
+  }
+  return n;
+}
+
+const MAX_TREE = 5000;
+
+// Everything under a folder, at any depth and in any state (including trashed items, whose
+// stored path is shown in Trash and must stay correct).
+async function descendantsOf(folderId) {
+  const out = [];
+  let frontier = [folderId];
+  while (frontier.length) {
+    const kids = (await Promise.all(frontier.map((id) => childrenOf(id, false)))).flat();
+    out.push(...kids);
+    if (out.length > MAX_TREE) throw new HttpError(413, `This folder holds more than ${MAX_TREE} items; it's too large to rename or move in one step.`);
+    frontier = kids.filter((k) => k.type === "folder").map((k) => k.id);
+  }
+  return out;
+}
+
+// Each item stores its folder path (ancestors) for breadcrumbs. After a folder is renamed or
+// moved, rewrite that path on everything beneath it. Idempotent, so a retry repairs a partial run.
+async function rewritePaths(folder, descendants) {
+  const prefix = [...folder.ancestors, { id: folder.id, name: folder.name }];
+  for (let i = 0; i < descendants.length; i += 25) {
+    await Promise.all(descendants.slice(i, i + 25).map((d) => {
+      const k = (d.ancestors ?? []).findIndex((a) => a.id === folder.id);
+      if (k < 0) return null;
+      return ddb.send(new UpdateCommand({
+        TableName: NODES,
+        Key: { id: d.id },
+        UpdateExpression: "SET ancestors = :a",
+        ExpressionAttributeValues: { ":a": [...prefix, ...d.ancestors.slice(k + 1)] },
+      }));
     }));
-    return json(200, Attributes);
-  } catch (e) {
-    if (e.name === "ConditionalCheckFailedException") throw new HttpError(409, "The file changed while renaming. Refresh and try again.");
-    throw e;
   }
 }
 
-async function moveFile(id, body, user) {
-  const file = await getFile(id);
-  if (file.status !== "active") throw new HttpError(409, "File isn't available to move");
+const conflict = (what) => (e) => {
+  if (e.name === "ConditionalCheckFailedException") throw new HttpError(409, `The ${what} changed meanwhile. Refresh and try again.`);
+  throw e;
+};
+
+async function renameNode(type, id, body, user) {
+  const node = await getActiveNode(id, type);
+  const name = cleanName(body.name);
+  if (name === node.name) return json(200, node);
+  // A case-only change ("song.gp" -> "Song.gp") can't clash with anything but itself.
+  if (name.toLowerCase() !== node.nameLower) await assertNameFree(node.parentId, name, type);
+  const descendants = type === "folder" ? await descendantsOf(id) : [];
+  const now = new Date().toISOString();
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: NODES,
+    Key: { id },
+    ConditionExpression: "#s = :a AND #n = :old",
+    // Previous names are kept, in line with "nothing is ever destroyed".
+    UpdateExpression: "SET #n = :n, nameLower = :nl, renamedAt = :t, renamedBy = :u, nameHistory = list_append(if_not_exists(nameHistory, :empty), :prev)",
+    ExpressionAttributeNames: { "#s": "status", "#n": "name" },
+    ExpressionAttributeValues: {
+      ":a": "active", ":old": node.name, ":n": name, ":nl": name.toLowerCase(), ":t": now,
+      ":u": user.email || user.id, ":empty": [], ":prev": [{ name: node.name, until: now }],
+    },
+    ReturnValues: "ALL_NEW",
+  })).catch(conflict(type));
+  if (type === "folder") await rewritePaths(Attributes, descendants);
+  return json(200, Attributes);
+}
+
+async function moveNode(type, id, body, user) {
+  const node = await getActiveNode(id, type);
   const parent = await resolveParent(body.parentId);
-  if (parent.id === file.parentId) throw new HttpError(400, "File is already in that folder");
-  await assertNameFree(parent.id, file.name, "file");
-  try {
-    await ddb.send(new UpdateCommand({
-      TableName: NODES,
-      Key: { id },
-      ConditionExpression: "#s = :a AND parentId = :old",
-      UpdateExpression: "SET parentId = :p, ancestors = :anc, movedAt = :t, movedBy = :u",
-      ExpressionAttributeNames: { "#s": "status" },
-      ExpressionAttributeValues: {
-        ":a": "active", ":old": file.parentId, ":p": parent.id, ":anc": parent.ancestors,
-        ":t": new Date().toISOString(), ":u": user.email || user.id,
-      },
-    }));
-  } catch (e) {
-    if (e.name === "ConditionalCheckFailedException") throw new HttpError(409, "The file changed while moving. Refresh and try again.");
-    throw e;
+  // parent.ancestors includes the target itself, so this also catches "move into itself".
+  if (type === "folder" && parent.ancestors.some((a) => a.id === id)) {
+    throw new HttpError(400, "A folder can't be moved into itself or one of its subfolders");
   }
-  return json(200, { ok: true, parentId: parent.id });
+  if (parent.id === node.parentId) throw new HttpError(400, `${type === "file" ? "File" : "Folder"} is already in that folder`);
+  await assertNameFree(parent.id, node.name, type);
+  const descendants = type === "folder" ? await descendantsOf(id) : [];
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: NODES,
+    Key: { id },
+    ConditionExpression: "#s = :a AND parentId = :old",
+    UpdateExpression: "SET parentId = :p, ancestors = :anc, movedAt = :t, movedBy = :u",
+    ExpressionAttributeNames: { "#s": "status" },
+    ExpressionAttributeValues: {
+      ":a": "active", ":old": node.parentId, ":p": parent.id, ":anc": parent.ancestors,
+      ":t": new Date().toISOString(), ":u": user.email || user.id,
+    },
+    ReturnValues: "ALL_NEW",
+  })).catch(conflict(type));
+  if (type === "folder") await rewritePaths(Attributes, descendants);
+  return json(200, Attributes);
 }
 
 const queryComments = (id) => queryAll({
@@ -674,8 +719,8 @@ const routes = [
   ["POST", /^\/files$/, (_, e, u) => createFile(parseBody(e), u)],
   ["GET", /^\/files\/([^/]+)$/, ([id], e) => getFileDetail(id, e.queryStringParameters?.include === "comments")],
   ["DELETE", /^\/files\/([^/]+)$/, ([id], e, u) => softDelete(id, "file", u)],
-  ["POST", /^\/files\/([^/]+)\/rename$/, ([id], e, u) => renameFile(id, parseBody(e), u)],
-  ["POST", /^\/files\/([^/]+)\/move$/, ([id], e, u) => moveFile(id, parseBody(e), u)],
+  ["POST", /^\/(files|folders)\/([^/]+)\/rename$/, ([kind, id], e, u) => renameNode(kind === "files" ? "file" : "folder", id, parseBody(e), u)],
+  ["POST", /^\/(files|folders)\/([^/]+)\/move$/, ([kind, id], e, u) => moveNode(kind === "files" ? "file" : "folder", id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions$/, ([id], e, u) => newVersion(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions\/(\d+)\/complete$/, ([id, v], e, u) => completeVersion(id, Number(v), u)],
   ["GET", /^\/files\/([^/]+)\/versions\/(\d+)\/download$/, ([id, v]) => downloadUrl(id, Number(v))],

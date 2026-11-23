@@ -76,6 +76,6 @@ Nothing is ever hard-deleted:
 ## Notes / limits
 
 - Uploads use a single presigned PUT (max 5 GB per file).
-- Files can be renamed (previous names are kept in the item's `nameHistory`; downloads use the current name). Folders can only be deleted when empty and can't be renamed or moved yet.
+- Files and folders can be renamed and moved (drag and drop, or the ⋯ menu; a folder's own ⋯ is next to its title). Previous names are kept in `nameHistory`, and downloads use the current name. Renaming or moving a folder rewrites the stored path of everything inside it, including trashed items, up to 5,000 items per operation. Folders can only be trashed when empty.
 - A Google user and an email/password user with the same address are separate Cognito users (comments show the email either way). Linking them needs a pre-signup Lambda trigger.
 - Terraform state holds the Google client secret; use a remote, encrypted backend for real use.

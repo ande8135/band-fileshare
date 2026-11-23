@@ -396,8 +396,8 @@ function dropTarget(el, targetId) {
     if (!ours(e)) return;
     e.preventDefault();
     e.stopPropagation();
-    const f = JSON.parse(e.dataTransfer.getData(DRAG_TYPE));
-    if (f.parentId !== targetId) moveFile(f, targetId);
+    const n = JSON.parse(e.dataTransfer.getData(DRAG_TYPE));
+    if (n.parentId !== targetId && n.id !== targetId) moveNode(n, targetId);
   });
   return el;
 }
@@ -425,7 +425,9 @@ function drawFolder(d) {
     crumbs,
     title: d.folder ? d.folder.name : "Files",
     sub: count ? `${d.folders.length ? `${d.folders.length} folder${d.folders.length > 1 ? "s" : ""}` : ""}${d.folders.length && d.files.length ? " · " : ""}${d.files.length ? `${d.files.length} file${d.files.length > 1 ? "s" : ""}` : ""}` : null,
-    actions: [count ? filter : null, btn("New folder", { icon: "folderPlus", onClick: newFolder }),
+    actions: [count ? filter : null,
+      d.folder ? btn("", { icon: "more", title: "Folder actions", onClick: (e) => menu(e.currentTarget, folderMenu(d.folder)) }) : null,
+      btn("New folder", { icon: "folderPlus", onClick: newFolder }),
       btn("Upload", { icon: "upload", kind: "primary", onClick: () => $("picker").click() })],
     body,
   });
@@ -454,14 +456,25 @@ function rowShell(attrs, node, nameExtras, cells, menuItems) {
     cells, h("span", { class: "cell-act" }, more));
 }
 
+const dragPayload = (n) => (e) => {
+  e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id: n.id, type: n.type, name: n.name, parentId: n.parentId }));
+  e.dataTransfer.effectAllowed = "move";
+};
+
+const folderMenu = (f) => [
+  { label: "Rename…", icon: "edit", onClick: () => renameNode(f) },
+  { label: "Move to folder…", icon: "folderMove", onClick: () => openMove(f) },
+  "-", { label: "Move to trash", icon: "trash", danger: true, onClick: () => deleteFolder(f) },
+];
+
 function folderRow(f) {
   const open = () => { location.hash = `#/folder/${f.id}`; };
   const row = rowShell({
-    role: "link", onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); },
-    onpointerenter: () => prefetchFolder(f.id), onpointerdown: () => prefetchFolder(f.id),
+    role: "link", draggable: "true", onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); },
+    onpointerenter: () => prefetchFolder(f.id), onpointerdown: () => prefetchFolder(f.id), ondragstart: dragPayload(f),
   }, f, h("span", { class: "sub" }, "Folder"),
   [h("span", { class: "cell-meta" }, time(f.createdAt)), h("span", { class: "cell-meta" }, "—"), h("span", { class: "cell-meta" }, person(f.createdByName, f.createdBy))],
-  () => [{ label: "Open", icon: "folder", onClick: open }, "-", { label: "Move to trash", icon: "trash", danger: true, onClick: () => deleteFolder(f) }]);
+  () => [{ label: "Open", icon: "folder", onClick: open }, ...folderMenu(f)]);
   return dropTarget(row, f.id);
 }
 
@@ -470,7 +483,7 @@ function fileRow(f) {
   const row = rowShell({
     "data-file": f.id, role: "button", draggable: "true", onclick: open,
     onkeydown: (e) => { if (e.key === "Enter") open(); },
-    ondragstart: (e) => { e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id: f.id, name: f.name, parentId: f.parentId })); e.dataTransfer.effectAllowed = "move"; },
+    ondragstart: dragPayload(f),
   }, f,
   [f.currentVersion > 1 ? h("span", { class: "chip" }, `v${f.currentVersion}`) : null,
     h("span", { class: "sub" }, [fmtSize(f.size), ago(f.updatedAt)].filter(Boolean).join(" · "))],
@@ -478,7 +491,7 @@ function fileRow(f) {
   () => [
     { label: "Open details", icon: "message", onClick: open },
     { label: "Download", icon: "download", onClick: () => download(f.id, f.currentVersion) },
-    { label: "Rename…", icon: "edit", onClick: () => renameFile(f) },
+    { label: "Rename…", icon: "edit", onClick: () => renameNode(f) },
     { label: "Move to folder…", icon: "folderMove", onClick: () => openMove(f) },
     "-", { label: "Move to trash", icon: "trash", danger: true, onClick: () => deleteFile(f) },
   ]);
@@ -522,29 +535,30 @@ async function download(id, version) {
   } catch (e) { fail(e); }
 }
 
-async function renameFile(f) {
-  const name = await promptDialog({ title: "Rename file", label: "Name", value: f.name, ok: "Rename", selectBase: true });
+const plural = (n) => (n.type === "folder" ? "folders" : "files");
+
+async function renameNode(f) {
+  const isFile = f.type !== "folder";
+  const name = await promptDialog({ title: isFile ? "Rename file" : "Rename folder", label: "Name", value: f.name, ok: "Rename", selectBase: isFile });
   if (!name || name === f.name) return;
   const ext = (n) => (/\.([^.]+)$/.exec(n)?.[1] ?? "").toLowerCase();
-  if (ext(name) !== ext(f.name) && !await confirmDialog(
+  if (isFile && ext(name) !== ext(f.name) && !await confirmDialog(
     ext(name) ? `Change the extension from “.${ext(f.name) || "none"}” to “.${ext(name)}”? The file may open differently.`
       : `Remove the “.${ext(f.name)}” extension? The file may not open correctly.`,
     { title: "Change file extension?", ok: "Change it" })) return;
   try {
-    const updated = await api("POST", `/files/${f.id}/rename`, { name });
-    invalidate(f.parentId);
-    fileCache.delete(f.id);
+    const updated = await api("POST", `/${plural(f)}/${f.id}/rename`, { name });
+    if (isFile) { invalidate(f.parentId); fileCache.delete(f.id); } else { folderCache.clear(); fileCache.clear(); } // paths below a folder changed
     if (panel.file?.id === f.id) { panel.file = { ...panel.file, ...updated }; drawPanel(); }
     toast(`Renamed to “${updated.name}”`);
     await reload();
   } catch (e) { fail(e); }
 }
 
-async function moveFile(f, targetId) {
+async function moveNode(f, targetId) {
   try {
-    await api("POST", `/files/${f.id}/move`, { parentId: targetId });
-    invalidate(f.parentId, targetId);
-    fileCache.delete(f.id);
+    await api("POST", `/${plural(f)}/${f.id}/move`, { parentId: targetId });
+    if (f.type === "folder") { folderCache.clear(); fileCache.clear(); } else { invalidate(f.parentId, targetId); fileCache.delete(f.id); }
     if (panel.file?.id === f.id) closePanel();
     toast(`Moved “${f.name}”`);
     await reload();
@@ -552,10 +566,11 @@ async function moveFile(f, targetId) {
 }
 
 function openMove(file) {
-  let target = file.parentId;
+  const from = file.parentId ?? "root";
+  let target = from;
   const crumbs = h("nav", { class: "picker-crumbs" });
   const list = h("div", { class: "picker-list" });
-  const go = btn("Move here", { kind: "primary", onClick: () => { dlg.close(); moveFile(file, target); } });
+  const go = btn("Move here", { kind: "primary", onClick: () => { dlg.close(); moveNode(file, target); } });
   const load = async (id) => {
     list.classList.add("loading");
     try {
@@ -563,14 +578,15 @@ function openMove(file) {
       target = id;
       fill(crumbs, h("a", { onclick: () => load("root") }, "Files"),
         d.breadcrumbs.flatMap((c) => [icon("chevron", "sep"), h("a", { onclick: () => load(c.id) }, c.name)]));
-      fill(list, ...(d.folders.length
-        ? d.folders.map((f) => h("button", { class: "picker-item", onclick: () => load(f.id), onpointerenter: () => prefetchFolder(f.id) }, tile(f, "sm"), h("span", {}, f.name), icon("chevron", "go")))
+      const choices = d.folders.filter((f) => f.id !== file.id); // a folder can't go inside itself
+      fill(list, ...(choices.length
+        ? choices.map((f) => h("button", { class: "picker-item", onclick: () => load(f.id), onpointerenter: () => prefetchFolder(f.id) }, tile(f, "sm"), h("span", {}, f.name), icon("chevron", "go")))
         : [h("p", { class: "hint pad" }, "No subfolders here.")]));
-      go.disabled = id === file.parentId;
+      go.disabled = id === from;
     } catch (e) { fail(e); } finally { list.classList.remove("loading"); }
   };
   const dlg = modal({ title: `Move “${file.name}”`, body: h("div", {}, crumbs, list), actions: [btn("Cancel", { onClick: () => dlg.close() }), go] });
-  load(file.parentId);
+  load(from);
 }
 
 // ============================================================================
@@ -679,7 +695,7 @@ function drawPanel() {
     btn("Download", { icon: "download", kind: "primary", size: "sm", onClick: () => download(file.id, file.currentVersion) }),
     btn("New version", { icon: "upload", size: "sm", onClick: () => uploadVersionDialog() }),
     btn("", { icon: "more", size: "sm", title: "More", onClick: (e) => menu(e.currentTarget, [
-      { label: "Rename…", icon: "edit", onClick: () => renameFile(file) },
+      { label: "Rename…", icon: "edit", onClick: () => renameNode(file) },
       { label: "Move to folder…", icon: "folderMove", onClick: () => openMove(file) },
       "-", { label: "Move to trash", icon: "trash", danger: true, onClick: () => deleteFile(file) }]) }));
 
