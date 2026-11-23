@@ -298,6 +298,7 @@ async function showFile(id) {
   const d = await api("GET", `/files/${id}`).catch((e) => { toast(e.message); });
   if (!d) return;
   openFile = d;
+  editingSk = null;
   document.querySelectorAll("#rows tr").forEach((tr) => tr.classList.toggle("sel", tr.dataset.id === id));
   $("pName").textContent = d.file.name;
   renderVersions();
@@ -370,9 +371,11 @@ function renderComments() {
       h("div", { class: "row" },
         h("div", { class: "muted" }, personName(c.authorName, c.author), " · ", fmtDate(c.createdAt),
           c.version != null ? h("span", { class: "badge" }, "v" + c.version) : h("span", { class: "badge file" }, "file")),
-        c.author && c.author.toLowerCase() === me.email.toLowerCase()
-          ? h("button", { class: "link", onclick: () => removeComment(c) }, "Delete") : null),
-      h("div", { class: "cbody" }, c.text)));
+        c.author && c.author.toLowerCase() === me.email.toLowerCase() && editingSk !== c.sk
+          ? h("span", {}, h("button", { class: "link", onclick: () => { editingSk = c.sk; renderComments(); } }, "Edit"),
+            h("button", { class: "link", onclick: () => removeComment(c) }, "Delete")) : null),
+      editingSk === c.sk ? editForm(c) : h("div", { class: "cbody" }, c.text,
+        c.editedAt ? h("span", { class: "muted", title: "Edited " + fmtDate(c.editedAt) }, " (edited)") : null)));
   }
 }
 
@@ -386,6 +389,31 @@ async function postComment(e) {
     $("cText").value = "";
     renderComments();
   } catch (err) { toast(err.message); }
+}
+
+let editingSk = null;
+
+function editForm(c) {
+  const ta = h("textarea", { rows: "3", maxlength: "4000" });
+  ta.value = c.text;
+  const save = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    try {
+      const u = await api("PUT", `/files/${openFile.file.id}/comments/${encodeURIComponent(c.sk)}`, { text });
+      Object.assign(c, u);
+      editingSk = null;
+      renderComments();
+    } catch (e) { toast(e.message); }
+  };
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.stopPropagation(); editingSk = null; renderComments(); }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) save();
+  });
+  setTimeout(() => ta.focus(), 0);
+  return h("div", {}, ta, h("div", { class: "row", style: "margin-top:8px;justify-content:flex-end" },
+    h("button", { onclick: () => { editingSk = null; renderComments(); } }, "Cancel"),
+    h("button", { class: "primary", onclick: save }, "Save")));
 }
 
 async function removeComment(c) {

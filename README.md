@@ -58,7 +58,7 @@ Nothing is ever hard-deleted:
 - Deleting a file or folder (or a comment) only flags it (`status = deleted` / `deletedAt`). Folders must be empty first.
 - **Trash** (button in the toolbar) lists deleted files and folders with a **Restore** button. A file's parent folder must be active (restore the folder first) and its name must be free.
 - All file versions stay in S3 (bucket versioning is also on), and the API Lambda's IAM role has no `s3:DeleteObject` / `dynamodb:DeleteItem`, so even a bug can't remove data.
-- Deleted comments are hidden but kept in the `comments` table (`deletedAt` set); clear that attribute in the DynamoDB console to bring one back. Users can only delete their own comments.
+- Deleted comments are hidden but kept in the `comments` table (`deletedAt` set); clear that attribute in the DynamoDB console to bring one back. Users can only edit or delete their own comments. Edited comments show "(edited)", and each previous version of the text is kept in the comment's `history` attribute.
 - There is intentionally no permanent purge. `terraform destroy` won't remove the file bucket while it holds objects.
 
 ## Profiles and file names

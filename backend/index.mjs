@@ -450,6 +450,7 @@ async function listComments(id) {
     ExpressionAttributeValues: { ":f": id },
   });
   await decorate(comments, [["author", "authorName"]]);
+  for (const c of comments) delete c.history;
   return json(200, { comments });
 }
 
@@ -569,6 +570,32 @@ async function deleteComment(id, sk, user) {
   return json(200, { ok: true });
 }
 
+async function editComment(id, sk, body, user) {
+  await getFile(id);
+  const { Item } = await ddb.send(new GetCommand({ TableName: COMMENTS, Key: { fileId: id, sk } }));
+  if (!Item || Item.deletedAt) throw new HttpError(404, "Comment not found");
+  if (String(Item.author).toLowerCase() !== emailOf(user)) throw new HttpError(403, "You can only edit your own comments");
+  const text = String(body.text ?? "").trim();
+  if (!text || text.length > 4000) throw new HttpError(400, "Comment must be 1-4000 characters");
+  if (text === Item.text) return json(200, Item);
+  const now = new Date().toISOString();
+  // The previous text is kept in `history`, so edits never destroy anything.
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: COMMENTS,
+    Key: { fileId: id, sk },
+    ConditionExpression: "attribute_not_exists(deletedAt) AND #t = :old",
+    UpdateExpression: "SET #t = :t, editedAt = :now, history = list_append(if_not_exists(history, :empty), :prev)",
+    ExpressionAttributeNames: { "#t": "text" },
+    ExpressionAttributeValues: { ":t": text, ":old": Item.text, ":now": now, ":empty": [], ":prev": [{ text: Item.text, at: Item.editedAt ?? Item.createdAt }] },
+    ReturnValues: "ALL_NEW",
+  })).catch((e) => {
+    if (e.name === "ConditionalCheckFailedException") throw new HttpError(409, "The comment changed. Refresh and try again.");
+    throw e;
+  });
+  const { history, ...out } = Attributes;
+  return json(200, out);
+}
+
 async function getMe(user) {
   const { Item } = await ddb.send(new GetCommand({ TableName: PROFILES, Key: { email: emailOf(user) } }));
   return json(200, { email: user.email, name: user.name, displayName: Item?.displayName, isAdmin: user.isAdmin, role: user.role, owner: user.owner });
@@ -593,6 +620,7 @@ const routes = [
   ["PUT", /^\/me$/, (_, e, u) => setProfile(parseBody(e), u)],
   ["GET", /^\/trash$/, () => listTrash()],
   ["POST", /^\/(?:files|folders)\/([^/]+)\/restore$/, ([id], e, u) => restore(id, u)],
+  ["PUT", /^\/files\/([^/]+)\/comments\/([^/]+)$/, ([id, sk], e, u) => editComment(id, sk, parseBody(e), u)],
   ["DELETE", /^\/files\/([^/]+)\/comments\/([^/]+)$/, ([id, sk], e, u) => deleteComment(id, sk, u)],
   ["POST", /^\/invites$/, (_, e, u) => invite(parseBody(e), u)],
   ["GET", /^\/users$/, (_, e, u) => listUsers(u)],
