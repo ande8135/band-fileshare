@@ -16,11 +16,27 @@ resource "aws_dynamodb_table" "nodes" {
     name = "nameLower"
     type = "S"
   }
+  attribute {
+    name = "status"
+    type = "S"
+  }
+  attribute {
+    name = "deletedAt"
+    type = "S"
+  }
 
   global_secondary_index {
     name            = "by-parent"
     hash_key        = "parentId"
     range_key       = "nameLower"
+    projection_type = "ALL"
+  }
+
+  # Trash view: only deleted items carry deletedAt, so the index stays tiny.
+  global_secondary_index {
+    name            = "by-status"
+    hash_key        = "status"
+    range_key       = "deletedAt"
     projection_type = "ALL"
   }
 
@@ -63,6 +79,22 @@ resource "aws_dynamodb_table" "comments" {
   }
   attribute {
     name = "sk"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+}
+
+# Display names, keyed by lowercase email (so Google and password logins share one profile).
+resource "aws_dynamodb_table" "profiles" {
+  name         = "${local.name}-profiles"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "email"
+
+  attribute {
+    name = "email"
     type = "S"
   }
 

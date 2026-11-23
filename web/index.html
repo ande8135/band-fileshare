@@ -10,13 +10,14 @@
 <body>
   <header>
     <h1>📁 Fileshare</h1>
-    <div id="user" hidden><button id="invite" hidden>Invite people</button> <span id="who"></span> <button id="logout" class="link">Sign out</button></div>
+    <div id="user" hidden><button id="invite" hidden>Invite people</button> <button id="profile" class="link"><span id="who"></span> ✎</button> <button id="logout" class="link">Sign out</button></div>
   </header>
 
   <main id="app" hidden>
     <div class="toolbar">
       <nav id="crumbs" aria-label="Breadcrumbs"></nav>
       <div class="actions">
+        <button id="trashBtn">🗑 Trash</button>
         <button id="newFolder">New folder</button>
         <button id="upload" class="primary">Upload files</button>
         <input id="picker" type="file" multiple hidden>
@@ -24,7 +25,7 @@
     </div>
     <div id="drop">
       <table>
-        <thead><tr><th>Name</th><th>Version</th><th>Size</th><th>Modified</th><th>By</th></tr></thead>
+        <thead id="head"></thead>
         <tbody id="rows"></tbody>
       </table>
       <p id="empty" class="muted" hidden>Empty folder. Drop files here or use Upload.</p>
@@ -58,8 +59,18 @@
         </div>
       </form>
     </section>
-    <section><button id="delFile" class="danger">Delete file and all versions</button></section>
+    <section><button id="delFile" class="danger">Move file to trash</button></section>
   </aside>
+
+  <dialog id="profileDlg">
+    <form id="profileForm" method="dialog">
+      <h3>Your profile</h3>
+      <p class="muted" id="profileEmail"></p>
+      <label>Display name<br><input id="displayName" maxlength="60" required autocomplete="nickname"></label>
+      <p class="muted">Shown on your comments, uploads and edits.</p>
+      <div class="row"><button type="button" id="profileCancel">Cancel</button><button class="primary">Save</button></div>
+    </form>
+  </dialog>
 
   <div id="login" class="center" hidden>
     <p>Sign in to access the shared files. Access is by invitation only.</p>

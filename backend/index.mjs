@@ -1,11 +1,8 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
-  DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand,
-  QueryCommand, DeleteCommand, BatchWriteCommand,
+  DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryCommand, BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
-import {
-  S3Client, HeadObjectCommand, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand,
-} from "@aws-sdk/client-s3";
+import { S3Client, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { CognitoIdentityProviderClient, AdminCreateUserCommand } from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
@@ -13,6 +10,7 @@ import { randomUUID } from "node:crypto";
 const NODES = process.env.NODES_TABLE;
 const VERSIONS = process.env.VERSIONS_TABLE;
 const COMMENTS = process.env.COMMENTS_TABLE;
+const PROFILES = process.env.PROFILES_TABLE;
 const BUCKET = process.env.FILES_BUCKET;
 const POOL = process.env.USER_POOL_ID;
 const ADMINS = (process.env.ADMIN_EMAILS || "").split(",").filter(Boolean);
@@ -34,6 +32,9 @@ const json = (status, body) => ({
   headers: { "content-type": "application/json", "cache-control": "no-store" },
   body: JSON.stringify(body),
 });
+
+// NOTE: this service never performs a hard delete. "Deleting" marks rows status=deleted /
+// deletedAt, S3 objects are kept, and the Lambda role has no delete permissions at all.
 
 // ---------- helpers ----------
 function cleanName(raw) {
@@ -64,8 +65,38 @@ async function getNode(id) {
 
 async function getFile(id) {
   const n = await getNode(id);
-  if (!n || n.type !== "file") throw new HttpError(404, "File not found");
+  if (!n || n.type !== "file" || n.status === "deleted") throw new HttpError(404, "File not found");
   return n;
+}
+
+const emailOf = (user) => (user.email || user.id).toLowerCase();
+
+// Display names live in the profiles table (keyed by lowercase email) and are resolved at read
+// time, so a name change shows up on everything the person ever did.
+async function displayNames(emails) {
+  const uniq = [...new Set(emails.filter(Boolean).map((e) => String(e).toLowerCase()))];
+  const names = {};
+  for (let i = 0; i < uniq.length; i += 100) {
+    let req = { [PROFILES]: { Keys: uniq.slice(i, i + 100).map((email) => ({ email })) } };
+    for (let attempt = 0; attempt < 3 && Object.keys(req).length; attempt++) {
+      const r = await ddb.send(new BatchGetCommand({ RequestItems: req }));
+      for (const p of r.Responses?.[PROFILES] ?? []) names[p.email] = p.displayName;
+      req = r.UnprocessedKeys ?? {};
+    }
+  }
+  return names;
+}
+
+// pairs: [[emailField, nameField], ...] -> sets item[nameField] when the person has a display name.
+async function decorate(items, pairs) {
+  const names = await displayNames(items.flatMap((i) => pairs.map(([f]) => i[f])));
+  for (const i of items) {
+    for (const [f, n] of pairs) {
+      const dn = names[String(i[f] ?? "").toLowerCase()];
+      if (dn) i[n] = dn;
+    }
+  }
+  return items;
 }
 
 async function queryAll(params) {
@@ -127,18 +158,8 @@ function contentTypeOf(body) {
   return ct;
 }
 
-async function batchDelete(table, keys) {
-  for (let i = 0; i < keys.length; i += 25) {
-    let req = { [table]: keys.slice(i, i + 25).map((Key) => ({ DeleteRequest: { Key } })) };
-    for (let attempt = 0; attempt < 5 && Object.keys(req).length; attempt++) {
-      const r = await ddb.send(new BatchWriteCommand({ RequestItems: req }));
-      req = r.UnprocessedItems ?? {};
-    }
-  }
-}
-
 // Allocates the next version number and records it as pending until the upload is confirmed.
-async function startVersion(file, user, { contentType, size, note }) {
+async function startVersion(file, user, { contentType, size, note, fileName }) {
   const { Attributes } = await ddb.send(new UpdateCommand({
     TableName: NODES,
     Key: { id: file.id },
@@ -150,7 +171,7 @@ async function startVersion(file, user, { contentType, size, note }) {
   await ddb.send(new PutCommand({
     TableName: VERSIONS,
     Item: {
-      fileId: file.id, version, status: "pending", s3Key: s3Key(file.id, version),
+      fileId: file.id, version, status: "pending", s3Key: s3Key(file.id, version), originalName: fileName,
       contentType, declaredSize: Number(size) || 0, note: note ? String(note).slice(0, 500) : undefined,
       uploadedBy: user.email || user.id, uploadedByName: user.name, uploadedAt: new Date().toISOString(),
     },
@@ -165,7 +186,7 @@ async function listFolder(id) {
     folder = await getNode(id);
     if (!folder || folder.type !== "folder") throw new HttpError(404, "Folder not found");
   }
-  const items = await childrenOf(id);
+  const items = await decorate(await childrenOf(id), [["createdBy", "createdByName"], ["updatedBy", "updatedByName"]]);
   return {
     folder,
     breadcrumbs: folder ? [...folder.ancestors, { id: folder.id, name: folder.name }] : [],
@@ -187,12 +208,53 @@ async function createFolder(body, user) {
   return json(201, item);
 }
 
-async function deleteFolder(id) {
-  const folder = await getNode(id);
-  if (!folder || folder.type !== "folder") throw new HttpError(404, "Folder not found");
-  if ((await childrenOf(id, false)).length) throw new HttpError(409, "Folder is not empty");
-  await ddb.send(new DeleteCommand({ TableName: NODES, Key: { id } }));
+async function softDelete(id, type, user) {
+  const node = await getNode(id);
+  if (!node || node.type !== type || node.status !== "active") throw new HttpError(404, `${type === "file" ? "File" : "Folder"} not found`);
+  if (type === "folder" && (await childrenOf(id)).length) {
+    throw new HttpError(409, "Folder is not empty. Move its contents to the trash first.");
+  }
+  await ddb.send(new UpdateCommand({
+    TableName: NODES,
+    Key: { id },
+    ConditionExpression: "#s = :a",
+    UpdateExpression: "SET #s = :d, deletedAt = :t, deletedBy = :u",
+    ExpressionAttributeNames: { "#s": "status" },
+    ExpressionAttributeValues: { ":a": "active", ":d": "deleted", ":t": new Date().toISOString(), ":u": user.email || user.id },
+  }));
   return json(200, { ok: true });
+}
+
+async function restore(id, user) {
+  const node = await getNode(id);
+  if (!node || node.status !== "deleted") throw new HttpError(404, "Nothing to restore");
+  if (node.parentId !== "root") {
+    const parent = await getNode(node.parentId);
+    if (!parent || parent.status !== "active") throw new HttpError(409, "Restore the parent folder first");
+  }
+  await assertNameFree(node.parentId, node.name, node.type);
+  await ddb.send(new UpdateCommand({
+    TableName: NODES,
+    Key: { id },
+    ConditionExpression: "#s = :d",
+    UpdateExpression: "SET #s = :a, restoredAt = :t, restoredBy = :u REMOVE deletedAt, deletedBy",
+    ExpressionAttributeNames: { "#s": "status" },
+    ExpressionAttributeValues: { ":a": "active", ":d": "deleted", ":t": new Date().toISOString(), ":u": user.email || user.id },
+  }));
+  return json(200, { ok: true });
+}
+
+async function listTrash() {
+  const items = await queryAll({
+    TableName: NODES,
+    IndexName: "by-status",
+    KeyConditionExpression: "#s = :d",
+    ExpressionAttributeNames: { "#s": "status" },
+    ExpressionAttributeValues: { ":d": "deleted" },
+    ScanIndexForward: false,
+  });
+  await decorate(items, [["deletedBy", "deletedByName"]]);
+  return json(200, { items });
 }
 
 async function createFile(body, user) {
@@ -207,7 +269,7 @@ async function createFile(body, user) {
     updatedAt: now, updatedBy: user.email || user.id, contentType, size: 0, versionCounter: 0,
   };
   await ddb.send(new PutCommand({ TableName: NODES, Item: file }));
-  const v = await startVersion(file, user, { contentType, size: body.size, note: body.note });
+  const v = await startVersion(file, user, { contentType, size: body.size, note: body.note, fileName: name });
   return json(201, { file, ...v });
 }
 
@@ -221,6 +283,7 @@ async function getFileDetail(id) {
     ExpressionAttributeValues: { ":f": id, ":c": "complete" },
     ScanIndexForward: false,
   });
+  await decorate(versions, [["uploadedBy", "uploadedByName"]]);
   return json(200, { file, versions, breadcrumbs: file.ancestors });
 }
 
@@ -228,6 +291,7 @@ async function newVersion(id, body, user) {
   const file = await getFile(id);
   const v = await startVersion(file, user, {
     contentType: contentTypeOf(body), size: body.size, note: body.note,
+    fileName: body.fileName ? cleanName(body.fileName) : file.name,
   });
   return json(201, v);
 }
@@ -257,12 +321,12 @@ async function completeVersion(id, version, user) {
     await ddb.send(new UpdateCommand({
       TableName: NODES,
       Key: { id },
-      ConditionExpression: "attribute_not_exists(currentVersion) OR currentVersion < :v",
+      ConditionExpression: "(attribute_not_exists(currentVersion) OR currentVersion < :v) AND #s <> :del",
       UpdateExpression:
         "SET currentVersion = :v, #z = :z, contentType = :ct, #s = :a, updatedAt = :t, updatedBy = :u",
       ExpressionAttributeNames: { "#z": "size", "#s": "status" },
       ExpressionAttributeValues: {
-        ":v": version, ":z": head.ContentLength, ":ct": ver.contentType, ":a": "active",
+        ":v": version, ":z": head.ContentLength, ":ct": ver.contentType, ":a": "active", ":del": "deleted",
         ":t": now, ":u": user.email || user.id,
       },
     }));
@@ -282,38 +346,22 @@ async function downloadUrl(id, version) {
       Bucket: BUCKET,
       Key: ver.s3Key,
       ResponseContentType: ver.contentType,
-      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())}`,
+      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(ver.originalName || file.name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())}`,
     }),
     { expiresIn: EXPIRY },
   );
   return json(200, { url });
 }
 
-async function deleteFile(id) {
-  await getFile(id);
-  const versions = await queryAll({
-    TableName: VERSIONS, KeyConditionExpression: "fileId = :f", ExpressionAttributeValues: { ":f": id },
-  });
-  for (let i = 0; i < versions.length; i += 1000) {
-    await s3.send(new DeleteObjectsCommand({
-      Bucket: BUCKET,
-      Delete: { Objects: versions.slice(i, i + 1000).map((v) => ({ Key: v.s3Key })), Quiet: true },
-    }));
-  }
-  await batchDelete(VERSIONS, versions.map((v) => ({ fileId: id, version: v.version })));
-  const comments = await queryAll({
-    TableName: COMMENTS, KeyConditionExpression: "fileId = :f", ExpressionAttributeValues: { ":f": id },
-  });
-  await batchDelete(COMMENTS, comments.map((c) => ({ fileId: id, sk: c.sk })));
-  await ddb.send(new DeleteCommand({ TableName: NODES, Key: { id } }));
-  return json(200, { ok: true });
-}
-
 async function listComments(id) {
   await getFile(id);
   const comments = await queryAll({
-    TableName: COMMENTS, KeyConditionExpression: "fileId = :f", ExpressionAttributeValues: { ":f": id },
+    TableName: COMMENTS,
+    KeyConditionExpression: "fileId = :f",
+    FilterExpression: "attribute_not_exists(deletedAt)",
+    ExpressionAttributeValues: { ":f": id },
   });
+  await decorate(comments, [["author", "authorName"]]);
   return json(200, { comments });
 }
 
@@ -355,16 +403,52 @@ async function invite(body, user) {
   return json(201, { ok: true, email });
 }
 
+async function deleteComment(id, sk, user) {
+  await getFile(id);
+  const { Item } = await ddb.send(new GetCommand({ TableName: COMMENTS, Key: { fileId: id, sk } }));
+  if (!Item || Item.deletedAt) throw new HttpError(404, "Comment not found");
+  if (String(Item.author).toLowerCase() !== emailOf(user)) throw new HttpError(403, "You can only delete your own comments");
+  await ddb.send(new UpdateCommand({
+    TableName: COMMENTS,
+    Key: { fileId: id, sk },
+    UpdateExpression: "SET deletedAt = :t, deletedBy = :u",
+    ExpressionAttributeValues: { ":t": new Date().toISOString(), ":u": user.email || user.id },
+  }));
+  return json(200, { ok: true });
+}
+
+async function getMe(user) {
+  const { Item } = await ddb.send(new GetCommand({ TableName: PROFILES, Key: { email: emailOf(user) } }));
+  return json(200, { email: user.email, name: user.name, displayName: Item?.displayName, isAdmin: user.isAdmin });
+}
+
+async function setProfile(body, user) {
+  const displayName = String(body.displayName ?? "").trim();
+  if (!user.email) throw new HttpError(400, "Your account has no email address");
+  if (!displayName || displayName.length > 60 || /[\u0000-\u001f<>]/.test(displayName)) {
+    throw new HttpError(400, "Display name must be 1-60 characters and can't contain < or >");
+  }
+  await ddb.send(new PutCommand({
+    TableName: PROFILES,
+    Item: { email: emailOf(user), displayName, updatedAt: new Date().toISOString() },
+  }));
+  return json(200, { displayName });
+}
+
 // ---------- router ----------
 const routes = [
-  ["GET", /^\/me$/, (_, e, u) => json(200, { email: u.email, name: u.name, isAdmin: u.isAdmin })],
+  ["GET", /^\/me$/, (_, e, u) => getMe(u)],
+  ["PUT", /^\/me$/, (_, e, u) => setProfile(parseBody(e), u)],
+  ["GET", /^\/trash$/, () => listTrash()],
+  ["POST", /^\/(?:files|folders)\/([^/]+)\/restore$/, ([id], e, u) => restore(id, u)],
+  ["DELETE", /^\/files\/([^/]+)\/comments\/([^/]+)$/, ([id, sk], e, u) => deleteComment(id, sk, u)],
   ["POST", /^\/invites$/, (_, e, u) => invite(parseBody(e), u)],
   ["GET", /^\/folders\/([^/]+)\/contents$/, ([id]) => listFolder(id)],
   ["POST", /^\/folders$/, (_, e, u) => createFolder(parseBody(e), u)],
-  ["DELETE", /^\/folders\/([^/]+)$/, ([id]) => deleteFolder(id)],
+  ["DELETE", /^\/folders\/([^/]+)$/, ([id], e, u) => softDelete(id, "folder", u)],
   ["POST", /^\/files$/, (_, e, u) => createFile(parseBody(e), u)],
   ["GET", /^\/files\/([^/]+)$/, ([id]) => getFileDetail(id)],
-  ["DELETE", /^\/files\/([^/]+)$/, ([id]) => deleteFile(id)],
+  ["DELETE", /^\/files\/([^/]+)$/, ([id], e, u) => softDelete(id, "file", u)],
   ["POST", /^\/files\/([^/]+)\/versions$/, ([id], e, u) => newVersion(id, parseBody(e), u)],
   ["POST", /^\/files\/([^/]+)\/versions\/(\d+)\/complete$/, ([id, v], e, u) => completeVersion(id, Number(v), u)],
   ["GET", /^\/files\/([^/]+)\/versions\/(\d+)\/download$/, ([id, v]) => downloadUrl(id, Number(v))],
@@ -382,7 +466,7 @@ function preflight(event) {
     statusCode: 204,
     headers: {
       "access-control-allow-origin": origin,
-      "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+      "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
       "access-control-allow-headers": "authorization,content-type",
       "access-control-max-age": "3600",
     },

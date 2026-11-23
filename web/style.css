@@ -25,6 +25,7 @@ th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line);
 th { font-size:12px; color:var(--muted); text-transform:uppercase; }
 td:first-child { white-space:normal; word-break:break-word; }
 tbody tr { cursor:pointer; } tbody tr:hover { background:color-mix(in srgb, var(--accent) 8%, transparent); }
+tbody tr.static { cursor:default; } tbody tr.static:hover { background:none; }
 tbody tr.sel { background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .muted { color:var(--muted); font-size:13px; }
 #empty { padding:24px; text-align:center; }
@@ -43,5 +44,10 @@ ul { list-style:none; padding:0; margin:0 0 10px; }
 .badge.file { background:var(--muted); }
 .cbody { white-space:pre-wrap; word-break:break-word; margin-top:4px; }
 .center { text-align:center; margin-top:20vh; }
+dialog { border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); min-width:min(360px,90vw); }
+dialog::backdrop { background:rgba(0,0,0,.4); }
+dialog input { width:100%; margin:6px 0; }
+.who-name { font-weight:600; }
+td.act { text-align:right; }
 #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#222; color:#fff; padding:8px 14px; border-radius:6px; opacity:0; pointer-events:none; transition:opacity .2s; max-width:90vw; }
 #toast.show { opacity:1; }

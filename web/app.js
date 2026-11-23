@@ -125,13 +125,55 @@ let folderId = "root";
 let openFile = null; // { file, versions }
 let comments = [];
 
+let me = { email: "", displayName: "" };
+const isTrash = () => location.hash === "#/trash";
 const route = () => {
   const m = /^#\/folder\/([\w-]+)/.exec(location.hash);
   return m ? m[1] : "root";
 };
+const setHead = (...cols) => $("head").replaceChildren(h("tr", {}, cols.map((c) => h("th", {}, c))));
+const personName = (name, email) => name || email || "";
 
 // ---------------- folder view ----------------
+async function loadTrash() {
+  closePanel();
+  const { items } = await api("GET", "/trash");
+  $("crumbs").replaceChildren(h("a", { href: "#/" }, "Home"), h("span", {}, "/"), "Trash");
+  $("trashBtn").textContent = "← Back to files";
+  $("newFolder").hidden = $("upload").hidden = true;
+  setHead("Name", "Was in", "Deleted", "By", "");
+  const rows = $("rows");
+  rows.replaceChildren();
+  for (const n of items) {
+    const where = "/" + (n.ancestors || []).map((a) => a.name).join("/");
+    rows.append(h("tr", { class: "static" },
+      h("td", {}, (n.type === "folder" ? "📁 " : "📄 ") + n.name), h("td", {}, where),
+      h("td", {}, fmtDate(n.deletedAt)), h("td", {}, personName(n.deletedByName, n.deletedBy)),
+      h("td", { class: "act" }, h("button", { onclick: () => restoreNode(n) }, "Restore"))));
+  }
+  $("empty").textContent = "Trash is empty.";
+  $("empty").hidden = items.length > 0;
+}
+
+async function restoreNode(n) {
+  try {
+    await api("POST", `/${n.type === "folder" ? "folders" : "files"}/${n.id}/restore`);
+    toast(`Restored "${n.name}"`);
+    await loadTrash();
+  } catch (e) { toast(e.message); }
+}
+
+async function deleteFolder(f) {
+  if (!confirm(`Move folder "${f.name}" to the trash? It must be empty.`)) return;
+  try { await api("DELETE", `/folders/${f.id}`); toast("Moved to trash"); await loadFolder(); } catch (e) { toast(e.message); }
+}
+
 async function loadFolder() {
+  if (isTrash()) return loadTrash();
+  $("trashBtn").textContent = "🗑 Trash";
+  $("newFolder").hidden = $("upload").hidden = false;
+  $("empty").textContent = "Empty folder. Drop files here or use Upload.";
+  setHead("Name", "Version", "Size", "Modified", "By", "");
   folderId = route();
   const d = await api("GET", `/folders/${folderId}/contents`);
   const crumbs = $("crumbs");
@@ -142,12 +184,13 @@ async function loadFolder() {
   rows.replaceChildren();
   for (const f of d.folders) {
     rows.append(h("tr", { onclick: () => { closePanel(); location.hash = `#/folder/${f.id}`; } },
-      h("td", {}, "📁 " + f.name), h("td"), h("td"), h("td", {}, fmtDate(f.createdAt)), h("td", {}, f.createdBy)));
+      h("td", {}, "📁 " + f.name), h("td"), h("td"), h("td", {}, fmtDate(f.createdAt)), h("td", {}, personName(f.createdByName, f.createdBy)),
+      h("td", { class: "act" }, h("button", { class: "link", title: "Move to trash", onclick: (e) => { e.stopPropagation(); deleteFolder(f); } }, "🗑"))));
   }
   for (const f of d.files) {
     rows.append(h("tr", { "data-id": f.id, onclick: () => showFile(f.id) },
       h("td", {}, "📄 " + f.name), h("td", {}, "v" + f.currentVersion),
-      h("td", {}, fmtSize(f.size)), h("td", {}, fmtDate(f.updatedAt)), h("td", {}, f.updatedBy)));
+      h("td", {}, fmtSize(f.size)), h("td", {}, fmtDate(f.updatedAt)), h("td", {}, personName(f.updatedByName, f.updatedBy)), h("td")));
   }
   $("empty").hidden = d.folders.length + d.files.length > 0;
 }
@@ -186,6 +229,7 @@ async function uploadNewFile(file) {
 }
 
 async function uploadFiles(files) {
+  if (isTrash()) return toast("Leave the trash to upload files");
   await Promise.all([...files].map(uploadNewFile));
   await refresh();
 }
@@ -217,7 +261,8 @@ function renderVersions() {
       h("div", { class: "row" },
         h("strong", {}, `v${v.version}`, v.version === file.currentVersion ? h("span", { class: "badge" }, "current") : null),
         h("button", { onclick: () => download(v.version) }, "Download")),
-      h("div", { class: "muted" }, `${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)} · ${v.uploadedBy}`),
+      h("div", {}, "📎 ", v.originalName || file.name),
+      h("div", { class: "muted" }, `${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)} · ${personName(v.uploadedByName, v.uploadedBy)}`),
       v.note ? h("div", {}, v.note) : null));
   }
   const opts = (first) => [first, ...versions.map((v) => h("option", { value: String(v.version) }, `Version ${v.version}`))];
@@ -240,7 +285,7 @@ async function uploadVersion(file) {
   const ui = trackUpload(`${openFile.file.name} (new version)`);
   try {
     const contentType = file.type || "application/octet-stream";
-    const r = await api("POST", `/files/${id}/versions`, { contentType, size: file.size, note: $("verNote").value.trim() });
+    const r = await api("POST", `/files/${id}/versions`, { contentType, fileName: file.name, size: file.size, note: $("verNote").value.trim() });
     await putFile(r.uploadUrl, file, r.contentType, ui.progress);
     await api("POST", `/files/${id}/versions/${r.version}/complete`);
     ui.done();
@@ -263,8 +308,11 @@ function renderComments() {
   if (!shown.length) ul.append(h("li", { class: "muted" }, "No comments."));
   for (const c of shown) {
     ul.append(h("li", {},
-      h("div", { class: "muted" }, c.authorName || c.author, " · ", fmtDate(c.createdAt),
-        c.version != null ? h("span", { class: "badge" }, "v" + c.version) : h("span", { class: "badge file" }, "file")),
+      h("div", { class: "row" },
+        h("div", { class: "muted" }, personName(c.authorName, c.author), " · ", fmtDate(c.createdAt),
+          c.version != null ? h("span", { class: "badge" }, "v" + c.version) : h("span", { class: "badge file" }, "file")),
+        c.author && c.author.toLowerCase() === me.email.toLowerCase()
+          ? h("button", { class: "link", onclick: () => removeComment(c) }, "Delete") : null),
       h("div", { class: "cbody" }, c.text)));
   }
 }
@@ -281,9 +329,38 @@ async function postComment(e) {
   } catch (err) { toast(err.message); }
 }
 
+async function removeComment(c) {
+  if (!confirm("Delete this comment?")) return;
+  try {
+    await api("DELETE", `/files/${openFile.file.id}/comments/${encodeURIComponent(c.sk)}`);
+    comments = comments.filter((x) => x.sk !== c.sk);
+    renderComments();
+  } catch (e) { toast(e.message); }
+}
+
 async function deleteFile() {
-  if (!confirm(`Delete "${openFile.file.name}" and all its versions and comments?`)) return;
-  try { await api("DELETE", `/files/${openFile.file.id}`); closePanel(); await loadFolder(); } catch (e) { toast(e.message); }
+  if (!confirm(`Move "${openFile.file.name}" to the trash? You can restore it later.`)) return;
+  try { await api("DELETE", `/files/${openFile.file.id}`); closePanel(); toast("Moved to trash"); await loadFolder(); } catch (e) { toast(e.message); }
+}
+
+// ---------------- profile ----------------
+function showProfile(prefill) {
+  $("profileEmail").textContent = me.email;
+  $("displayName").value = me.displayName || prefill || "";
+  $("profileDlg").showModal();
+}
+
+async function saveProfile(e) {
+  e.preventDefault();
+  try {
+    const r = await api("PUT", "/me", { displayName: $("displayName").value });
+    me.displayName = r.displayName;
+    $("who").textContent = me.displayName;
+    $("profileDlg").close();
+    toast("Profile saved");
+    await refresh();
+    if (openFile) await showFile(openFile.file.id);
+  } catch (err) { toast(err.message); }
 }
 
 // ---------------- boot ----------------
@@ -298,7 +375,16 @@ async function main() {
   $("user").hidden = false;
   $("app").hidden = false;
   $("logout").onclick = logout;
-  api("GET", "/me").then((me) => { $("invite").hidden = !me.isAdmin; }).catch(() => {});
+  $("profile").onclick = () => showProfile();
+  $("profileForm").onsubmit = saveProfile;
+  $("profileCancel").onclick = () => $("profileDlg").close();
+  $("trashBtn").onclick = () => { location.hash = isTrash() ? "#/" : "#/trash"; };
+  api("GET", "/me").then((m) => {
+    me = { ...m, displayName: m.displayName || "" };
+    $("invite").hidden = !m.isAdmin;
+    $("who").textContent = me.displayName || me.email;
+    if (!me.displayName) showProfile(m.name !== m.email ? m.name : "");
+  }).catch(() => {});
   $("invite").onclick = async () => {
     const email = prompt("Email address to invite");
     if (!email) return;

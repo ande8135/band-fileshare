@@ -29,6 +29,14 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "files" {
   }
 }
 
+# Extra safety net: even a direct overwrite/delete outside the app keeps the prior object version.
+resource "aws_s3_bucket_versioning" "files" {
+  bucket = aws_s3_bucket.files.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_cors_configuration" "files" {
   bucket = aws_s3_bucket.files.id
 
@@ -42,7 +50,8 @@ resource "aws_s3_bucket_cors_configuration" "files" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "files" {
-  bucket = aws_s3_bucket.files.id
+  bucket     = aws_s3_bucket.files.id
+  depends_on = [aws_s3_bucket_versioning.files]
 
   rule {
     id     = "abort-incomplete-multipart"

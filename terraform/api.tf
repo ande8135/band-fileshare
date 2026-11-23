@@ -35,15 +35,14 @@ resource "aws_iam_role_policy" "api" {
       },
       {
         Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchWriteItem",
-        ]
+        # Deliberately no DeleteItem: data is never hard-deleted, only flagged.
+        Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
         Resource = [
           aws_dynamodb_table.nodes.arn,
           "${aws_dynamodb_table.nodes.arn}/index/*",
           aws_dynamodb_table.versions.arn,
           aws_dynamodb_table.comments.arn,
+          aws_dynamodb_table.profiles.arn,
         ]
       },
       {
@@ -54,7 +53,7 @@ resource "aws_iam_role_policy" "api" {
       {
         # The signer's permissions bound what presigned URLs can do.
         Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Action   = ["s3:GetObject", "s3:PutObject"] # no DeleteObject: file versions are kept forever
         Resource = "${aws_s3_bucket.files.arn}/*"
       },
     ]
@@ -76,6 +75,7 @@ resource "aws_lambda_function" "api" {
       NODES_TABLE     = aws_dynamodb_table.nodes.name
       VERSIONS_TABLE  = aws_dynamodb_table.versions.name
       COMMENTS_TABLE  = aws_dynamodb_table.comments.name
+      PROFILES_TABLE  = aws_dynamodb_table.profiles.name
       FILES_BUCKET    = aws_s3_bucket.files.id
       PRESIGN_EXPIRY  = tostring(var.presign_expiry_seconds)
       USER_POOL_ID    = aws_cognito_user_pool.main.id
@@ -93,7 +93,7 @@ resource "aws_apigatewayv2_api" "api" {
 
   cors_configuration {
     allow_origins = local.allowed_origins
-    allow_methods = ["GET", "POST", "DELETE", "OPTIONS"]
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
     max_age       = 3600
   }

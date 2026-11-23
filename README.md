@@ -45,6 +45,20 @@ Set `dev_origins = ["http://localhost:8080"]`, apply, then `cd web && npx serve 
 - Download: `GET /files/{id}/versions/{n}/download` returns a short-lived presigned GET URL (`presign_expiry_seconds`, default 15 min).
 - Every version is a separate S3 object (`files/<fileId>/<version>`); nothing is overwritten.
 
+## Deletes, trash and recovery
+
+Nothing is ever hard-deleted:
+- Deleting a file or folder (or a comment) only flags it (`status = deleted` / `deletedAt`). Folders must be empty first.
+- **Trash** (button in the toolbar) lists deleted files and folders with a **Restore** button. A file's parent folder must be active (restore the folder first) and its name must be free.
+- All file versions stay in S3 (bucket versioning is also on), and the API Lambda's IAM role has no `s3:DeleteObject` / `dynamodb:DeleteItem`, so even a bug can't remove data.
+- Deleted comments are hidden but kept in the `comments` table (`deletedAt` set); clear that attribute in the DynamoDB console to bring one back. Users can only delete their own comments.
+- There is intentionally no permanent purge. `terraform destroy` won't remove the file bucket while it holds objects.
+
+## Profiles and file names
+
+- Everyone can set a **display name** (✎ next to your name, prompted on first sign-in). It's stored per email in the `profiles` table and resolved at read time, so renaming yourself updates your past comments and uploads too.
+- Each version records the **original file name** you uploaded (shown with 📎, and used as the download name), even if a new version has a different name than the file's.
+
 ## Notes / limits
 
 - Uploads use a single presigned PUT (max 5 GB per file).
