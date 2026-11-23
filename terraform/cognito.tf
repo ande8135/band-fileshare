@@ -10,8 +10,8 @@ resource "aws_cognito_user_pool" "main" {
     allow_admin_create_user_only = true
 
     invite_message_template {
-      email_subject = "You're invited to ${local.name}"
-      email_message = "You've been invited to ${local.site_url}. Sign in with email {username} and temporary password {####} (or use Google with this email)."
+      email_subject = "You're invited to VDI File Share"
+      email_message = "You've been invited to VDI File Share at ${local.site_url}. Sign in with email {username} and temporary password {####} (or use Google with this email)."
       sms_message   = "Username {username}, temporary password {####}"
     }
   }
@@ -108,4 +108,18 @@ resource "aws_cognito_user" "admin" {
     email          = each.value
     email_verified = "true"
   }
+}
+
+# Branding for the Cognito hosted sign-in page.
+resource "aws_cognito_user_pool_ui_customization" "main" {
+  user_pool_id = aws_cognito_user_pool.main.id
+  image_file   = filebase64("${path.module}/../web/logo.png")
+  css          = <<-EOT
+    .banner-customizable { background-color: #231f20; }
+    .submitButton-customizable { background-color: #ff6000; border-color: #ff6000; }
+    .submitButton-customizable:hover { background-color: #e05500; }
+    .inputField-customizable:focus { border-color: #ff6000; }
+  EOT
+
+  depends_on = [aws_cognito_user_pool_domain.main]
 }

@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fileshare</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📁</text></svg>">
+  <title>VDI File Share</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="apple-touch-icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
-    <h1>📁 Fileshare</h1>
+    <h1><img src="logo.png" alt="" class="logo"> VDI File Share</h1>
     <div id="user" hidden><button id="invite" hidden>Manage users</button> <button id="profile" class="link"><span id="who"></span> ✎</button> <button id="logout" class="link">Sign out</button></div>
   </header>
 
@@ -94,6 +95,8 @@
   </div>
 
   <div id="login" class="center" hidden>
+    <img src="logo.png" alt="Volcano Diving Inc" class="logo-lg">
+    <h2>VDI File Share</h2>
     <p>Sign in to access the shared files. Access is by invitation only.</p>
     <p id="loginMsg" class="muted"></p>
     <button id="loginBtn" class="primary">Sign in</button>

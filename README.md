@@ -1,4 +1,4 @@
-# Band Fileshare
+# VDI File Share
 
 A small Dropbox/ShareFile-style app, deployed with Terraform.
 
