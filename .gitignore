@@ -6,4 +6,7 @@ terraform.tfvars
 *.auto.tfvars
 node_modules/
 crash.log
-config.js
+web/config.js
+web/dist/
+web/public/config.js
+terraform/.tfplan

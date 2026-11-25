@@ -1,5 +1,5 @@
 # Honours each object's Cache-Control: index.html/config.js revalidate every time, while
-# app.js/style.css/logo.png are requested as ?v=<content hash> and cached for a year.
+# Vite's content-hashed files under assets/ are cached for a year; logo.png for an hour.
 resource "aws_cloudfront_cache_policy" "site" {
   name        = "${local.name}-site"
   min_ttl     = 0

@@ -113,28 +113,35 @@ resource "aws_s3_bucket_policy" "site" {
 
 locals {
   content_types = {
-    html = "text/html; charset=utf-8"
-    js   = "application/javascript; charset=utf-8"
-    css  = "text/css; charset=utf-8"
-    svg  = "image/svg+xml"
-    ico  = "image/x-icon"
-    png  = "image/png"
+    html  = "text/html; charset=utf-8"
+    js    = "application/javascript; charset=utf-8"
+    css   = "text/css; charset=utf-8"
+    svg   = "image/svg+xml"
+    ico   = "image/x-icon"
+    png   = "image/png"
+    webp  = "image/webp"
+    woff2 = "font/woff2"
+    json  = "application/json"
+    txt   = "text/plain; charset=utf-8"
   }
-  web_files = toset([for f in fileset("${path.module}/../web", "**") : f if !contains(["config.js", "index.html"], f)])
 
-  # One version for all static assets; it changes whenever any of them changes.
-  asset_version = substr(md5(join("", [for f in sort(tolist(local.web_files)) : filemd5("${path.module}/../web/${f}")])), 0, 10)
+  # The Vite build output. Run ./deploy.sh (or `npm run build` in web/) before plan/apply;
+  # without web/dist/index.html the plan fails rather than uploading an empty site.
+  site_dir  = "${path.module}/../web/dist"
+  web_files = toset([for f in fileset(local.site_dir, "**") : f if !contains(["config.js", "index.html"], f)])
 }
 
 resource "aws_s3_object" "site" {
   for_each = local.web_files
 
-  bucket        = aws_s3_bucket.site.id
-  key           = each.value
-  source        = "${path.module}/../web/${each.value}"
-  etag          = filemd5("${path.module}/../web/${each.value}")
-  content_type  = lookup(local.content_types, reverse(split(".", each.value))[0], "application/octet-stream")
-  cache_control = "public, max-age=31536000, immutable"
+  bucket       = aws_s3_bucket.site.id
+  key          = each.value
+  source       = "${local.site_dir}/${each.value}"
+  etag         = filemd5("${local.site_dir}/${each.value}")
+  content_type = lookup(local.content_types, reverse(split(".", each.value))[0], "application/octet-stream")
+  # Vite puts content-hashed files under assets/, so they can be cached forever. Anything else
+  # (e.g. logo.png from web/public) keeps its name, so it gets a short cache.
+  cache_control = startswith(each.value, "assets/") ? "public, max-age=31536000, immutable" : "public, max-age=3600"
 }
 
 # index.html used to be one of the aws_s3_object.site objects. Without this, Terraform would
@@ -153,18 +160,9 @@ resource "aws_s3_object" "index" {
   content_type  = "text/html; charset=utf-8"
   cache_control = "no-cache"
   content = replace(
-    replace(
-      replace(
-        replace(
-          file("${path.module}/../web/index.html"),
-          "<!--PRECONNECT-->",
-          "<link rel=\"preconnect\" href=\"${aws_apigatewayv2_api.api.api_endpoint}\" crossorigin><link rel=\"preconnect\" href=\"https://${var.cognito_domain_prefix}.auth.${var.aws_region}.amazoncognito.com\" crossorigin>"
-        ),
-        "app.js\"", "app.js?v=${local.asset_version}\""
-      ),
-      "style.css\"", "style.css?v=${local.asset_version}\""
-    ),
-    "logo.png\"", "logo.png?v=${local.asset_version}\""
+    file("${local.site_dir}/index.html"),
+    "<!--PRECONNECT-->",
+    "<link rel=\"preconnect\" href=\"${aws_apigatewayv2_api.api.api_endpoint}\" crossorigin><link rel=\"preconnect\" href=\"https://${var.cognito_domain_prefix}.auth.${var.aws_region}.amazoncognito.com\" crossorigin>"
   )
 }
 
