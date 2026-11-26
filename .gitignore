@@ -10,3 +10,5 @@ web/config.js
 web/dist/
 web/public/config.js
 terraform/.tfplan
+web/public/font/
+web/public/soundfont/

@@ -48,6 +48,9 @@ export function extOf(name: string): string {
   return (/\.([a-z0-9]{1,8})$/i.exec(name)?.[1] ?? "").toLowerCase();
 }
 
+/** Guitar Pro files alphaTab can display: .gp (GP7/8), .gpx (GP6), .gp3/.gp4/.gp5. */
+export const isTab = (name: string) => /^gp[x345]?$/.test(extOf(name));
+
 export function kindOf(name: string): FileKind {
   const ext = extOf(name);
   return KINDS.find(([re]) => re.test(ext))?.[1] ?? "other";

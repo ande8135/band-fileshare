@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { fileQuery, qk } from "../lib/queries";
-import { ago, fmtSize, fullDate, personName } from "../lib/format";
+import { ago, fmtSize, fullDate, isTab, personName } from "../lib/format";
 import { useActions } from "../lib/actions";
 import { usePanel } from "../lib/panel";
 import type { Comment, FileDetail, FileNode, Me, Version } from "../lib/types";
@@ -65,7 +65,8 @@ export function DetailsPanel({ id, seed, me }: { id: string; seed?: FileNode; me
       </div>
 
       <div className="p-actions">
-        <Button label="Download" icon="download" kind="primary" size="sm" onClick={() => actions.download(file.id, file.currentVersion)} />
+        {isTab(file.name) && <Button label="Preview" icon="music" kind="primary" size="sm" onClick={() => actions.previewTab(file)} />}
+        <Button label="Download" icon="download" kind={isTab(file.name) ? "ghost" : "primary"} size="sm" onClick={() => actions.download(file.id, file.currentVersion)} />
         <Button label="New version" icon="upload" size="sm" onClick={newVersion} />
         <Button icon="more" size="sm" title="More" onClick={(e) => openMenu(e.currentTarget, [
           { label: "Rename…", icon: "edit", onClick: () => actions.rename(file) },
@@ -86,7 +87,8 @@ export function DetailsPanel({ id, seed, me }: { id: string; seed?: FileNode; me
 
       {tab === "comments"
         ? <Comments detail={data} file={file} me={me} />
-        : <Versions versions={data?.versions} file={file} onDownload={(v) => actions.download(file.id, v)} />}
+        : <Versions versions={data?.versions} file={file} onDownload={(v) => actions.download(file.id, v)}
+          onPreview={isTab(file.name) ? (v) => actions.previewTab(file, v) : undefined} />}
     </aside>
   );
 }
@@ -245,7 +247,9 @@ function CommentItem({ c, mine, editing, onEdit, onCancel, onSave, onDelete }: {
   );
 }
 
-function Versions({ versions, file, onDownload }: { versions?: Version[]; file: FileNode; onDownload: (v: number) => void }) {
+function Versions({ versions, file, onDownload, onPreview }: {
+  versions?: Version[]; file: FileNode; onDownload: (v: number) => void; onPreview?: (v: number) => void;
+}) {
   if (!versions) return <Loading />;
   return (
     <div className="p-body">
@@ -265,7 +269,10 @@ function Versions({ versions, file, onDownload }: { versions?: Version[]; file: 
                 </div>
                 {v.note && <p className="v-note">{v.note}</p>}
               </div>
-              <Button icon="download" size="sm" title={`Download version ${v.version}`} onClick={() => onDownload(v.version)} />
+              <span className="v-act">
+                {onPreview && <Button icon="music" size="sm" title={`Preview version ${v.version}`} onClick={() => onPreview(v.version)} />}
+                <Button icon="download" size="sm" title={`Download version ${v.version}`} onClick={() => onDownload(v.version)} />
+              </span>
             </li>
           );
         })}

@@ -3,12 +3,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { qk } from "./queries";
-import { extOf } from "./format";
+import { extOf, isTab } from "./format";
 import { usePanel } from "./panel";
 import type { AnyNode, FileNode, FolderNode } from "./types";
 import { useDialogs } from "../components/Dialogs";
 import { useFail, useToast } from "../components/Toast";
 import { MoveDialog } from "../components/MoveDialog";
+import { LazyTabViewer } from "../components/TabViewerLauncher";
 
 const plural = (n: Pick<AnyNode, "type">) => (n.type === "folder" ? "folders" : "files");
 
@@ -96,5 +97,13 @@ export function useActions() {
     } catch (e) { fail(e); }
   }
 
-  return { newFolder, rename, move, openMove, trashFile, trashFolder, download };
+  /** Read-only tab preview with playback. Defaults to the file's current version. */
+  const previewTab = (file: FileNode, version = file.currentVersion) => {
+    if (!isTab(file.name)) return;
+    dialogs.show((done) => (
+      <LazyTabViewer fileId={file.id} version={version} name={file.name} isCurrent={version === file.currentVersion} onClose={done} />
+    ));
+  };
+
+  return { newFolder, rename, move, openMove, trashFile, trashFolder, download, previewTab };
 }

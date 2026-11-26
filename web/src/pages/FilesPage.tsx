@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { folderQuery, usePrefetchFolder } from "../lib/queries";
 import { folderHref } from "../lib/route";
-import { fmtSize, ago, plural } from "../lib/format";
+import { fmtSize, ago, isTab, plural } from "../lib/format";
 import { useActions } from "../lib/actions";
 import { dragProps, useDropTarget } from "../lib/dnd";
 import { usePanel } from "../lib/panel";
@@ -145,6 +145,7 @@ function FileRow({ f }: { f: FileNode }) {
       <span className="cell-act">
         <MoreButton items={() => [
           { label: "Open details", icon: "message", onClick: open },
+          ...(isTab(f.name) ? [{ label: "Preview tab", icon: "music" as const, onClick: () => actions.previewTab(f) }] : []),
           { label: "Download", icon: "download", onClick: () => actions.download(f.id, f.currentVersion) },
           { label: "Rename…", icon: "edit", onClick: () => actions.rename(f) },
           { label: "Move to folder…", icon: "folderMove", onClick: () => actions.openMove(f) },
