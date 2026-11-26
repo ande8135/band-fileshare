@@ -3,7 +3,7 @@
 A small Dropbox/ShareFile-style app, deployed with Terraform.
 
 - **Folders, files, versions, comments** (comments can target the whole file or one version)
-- **Static site** (`web/`, vanilla JS) in a private S3 bucket behind CloudFront
+- **Web app** (`web/`): React + TypeScript built with Vite, served from a private S3 bucket behind CloudFront
 - **File storage**: private S3 bucket, browser uploads/downloads via **presigned URLs**
 - **Metadata**: DynamoDB (`nodes`, `versions`, `comments` tables)
 - **Auth**: Cognito user pool, email+password and Google; API Gateway JWT authorizer
@@ -16,21 +16,25 @@ All signed-in users share one workspace (everyone sees everything).
 1. **Google OAuth client** (Google Cloud Console → APIs & Services → Credentials → OAuth client ID → *Web application*).
    Add this Authorized redirect URI, using the Cognito domain prefix you'll choose:
    `https://<cognito_domain_prefix>.auth.<region>.amazoncognito.com/oauth2/idpresponse`
-2. Configure and apply:
+2. Configure:
    ```sh
-   cd terraform
-   cp terraform.tfvars.example terraform.tfvars   # edit it
+   cp terraform/terraform.tfvars.example terraform/terraform.tfvars   # edit it
    export TF_VAR_google_client_secret='GOCSPX-...'
-   terraform init
-   terraform apply
    ```
-3. Open the `site_url` output. Sign in with Google or create an email/password account.
+3. Deploy (needs Node 20+, Terraform and AWS credentials):
+   ```sh
+   ./deploy.sh            # build web app -> terraform plan -> confirm -> apply
+   ./deploy.sh --plan     # build and show the plan only
+   ./deploy.sh --yes      # no confirmation prompt (CI)
+   ```
+   The script runs `npm ci && npm run build` in `web/`, then `terraform init`, saves a plan, lists anything that would be destroyed or replaced, asks for confirmation, and applies exactly that plan. Running `terraform apply` by hand also works, as long as `web/dist` has been built first; without it the plan fails instead of uploading an empty site.
+4. Open the `site_url` output and sign in (an invitation email was sent to each `admin_emails` address).
 
-Changing files in `web/` or `backend/` and re-running `terraform apply` redeploys them. `index.html` and `config.js` are served `no-cache`; `app.js`, `style.css` and `logo.png` are requested with a `?v=<content hash>` and cached for a year, so changes are live on the next page load without CloudFront invalidations.
+Re-running `./deploy.sh` after changing `web/` or `backend/` redeploys them. `index.html` and `config.js` are served `no-cache`; Vite's content-hashed files in `assets/` are cached for a year, so changes are live on the next page load without CloudFront invalidations.
 
 ## Roles and user management
 
-- **Administrators** can invite people (as member or administrator), change roles, and **remove / restore access** from **Manage users** in the header. **Members** can use files, versions and comments but can't manage users.
+- **Administrators** can invite people (as member or administrator), change roles, and **remove / restore access** from the **Members** page. **Members** can use files, versions and comments but can't manage users.
 - `admin_emails` in Terraform are **owners**: permanent administrators who can't be demoted or removed in the app, so you can never lock yourself out.
 - The `users` table is checked on every API request, so removing someone takes effect immediately. Their Cognito logins are also disabled and sessions revoked (best effort), and Restore re-enables them. Removal is reversible (no records are deleted), and their past files and comments stay.
 - Anyone invited before roles existed is adopted automatically as a member the first time they make a request.
@@ -44,14 +48,29 @@ Changing files in `web/` or `backend/` and re-running `terraform apply` redeploy
 
 ## Performance notes
 
-- The browser caches folder listings: going back to a folder renders instantly and refreshes in the background. Hovering a folder prefetches it, and duplicate requests for the same folder are merged.
+- TanStack Query caches folder listings: going back to a folder renders instantly and refreshes in the background. Hovering a folder prefetches it, and duplicate requests are merged.
 - The details panel opens immediately from the row's data and loads versions and comments in one request (`GET /files/{id}?include=comments`).
 - The API Lambda runs on arm64 with 1 GB of memory (Lambda CPU scales with memory), and independent DynamoDB reads run in parallel.
 - `index.html` preconnects to the API and Cognito so the first request skips the TLS handshake.
 
 ## Local development
 
-Set `dev_origins = ["http://localhost:8080"]`, apply, then `cd web && npx serve -l 8080 .` (the deployed `config.js` is in S3; copy it into `web/` locally, don't commit it).
+```sh
+cd web
+npm install
+cp ../path/to/deployed/config.js public/config.js   # or write one; see below (git-ignored)
+npm run dev                                          # http://localhost:8080
+```
+
+`public/config.js` sets `window.APP_CONFIG = { apiUrl, cognitoDomain, clientId, redirectUri: "http://localhost:8080/" }` (the deployed copy is at `<site_url>/config.js`; change `redirectUri`). Add `dev_origins = ["http://localhost:8080"]` to `terraform.tfvars` and deploy once so Cognito and CORS accept the local origin.
+
+`npm run typecheck` and `npm run build` (type-check + production bundle) are what the deploy script runs.
+
+### Front-end layout
+
+- `src/lib/`: API client, auth (PKCE), TanStack Query definitions (`queries.ts`), shared mutations (`actions.tsx`), types, routing
+- `src/components/`: UI primitives, dialogs, menus, toasts, uploads tray, details panel
+- `src/pages/`: Files, Trash, Members
 
 ## How it works
 

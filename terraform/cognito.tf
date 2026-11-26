@@ -119,7 +119,7 @@ resource "aws_cognito_user" "admin" {
 # Branding for the Cognito hosted sign-in page.
 resource "aws_cognito_user_pool_ui_customization" "main" {
   user_pool_id = aws_cognito_user_pool.main.id
-  image_file   = filebase64("${path.module}/../web/logo.png")
+  image_file   = filebase64("${path.module}/../web/public/logo.png")
   css          = <<-EOT
     .banner-customizable { background-color: #231f20; }
     .submitButton-customizable { background-color: #ff6000; border-color: #ff6000; }
