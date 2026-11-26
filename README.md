@@ -51,7 +51,8 @@ Re-running `./deploy.sh` after changing `web/` or `backend/` redeploys them. `in
 `.gp`, `.gpx`, `.gp3`, `.gp4` and `.gp5` files get a **Preview** button (details panel, row menu, and per version in the Versions tab). It opens a read-only viewer built on [alphaTab](https://www.alphatab.net/) that renders the notation and tab and plays it back with alphaTab's built-in MIDI synthesizer:
 
 - Play/pause (space), stop, click the progress bar or a beat to jump
-- Track picker, speed (50–150%), metronome, count-in, loop, volume, zoom, single-line layout
+- Track picker (one track or **All tracks**), speed (50–150%), metronome, count-in, loop, volume, zoom, single-line layout
+- **Mixer**: mute, solo and per-track volume (0–150%) for each instrument, starting from the mute/solo saved in the file. It only changes what that listener hears; the file isn't modified
 - Nothing in the viewer can change the file
 
 alphaTab, its notation font (Bravura) and soundfont (Sonivox) load only when a preview is opened, about 300 KB of compressed code plus ~1 MB of sounds, so normal page loads are unaffected. The file itself is fetched through the same short-lived presigned URL used for downloads.
