@@ -46,6 +46,16 @@ Re-running `./deploy.sh` after changing `web/` or `backend/` redeploys them. `in
 - To revoke someone: Cognito console → User pools → Users → delete (delete both the invited user and any Google-linked one with the same email). Current sessions stay valid until the 1h token expires.
 - Add/remove admins by editing `admin_emails` and re-applying.
 
+## Guitar Pro preview
+
+`.gp`, `.gpx`, `.gp3`, `.gp4` and `.gp5` files get a **Preview** button (details panel, row menu, and per version in the Versions tab). It opens a read-only viewer built on [alphaTab](https://www.alphatab.net/) that renders the notation and tab and plays it back with alphaTab's built-in MIDI synthesizer:
+
+- Play/pause (space), stop, click the progress bar or a beat to jump
+- Track picker, speed (50–150%), metronome, count-in, loop, volume, zoom, single-line layout
+- Nothing in the viewer can change the file
+
+alphaTab, its notation font (Bravura) and soundfont (Sonivox) load only when a preview is opened, about 300 KB of compressed code plus ~1 MB of sounds, so normal page loads are unaffected. The file itself is fetched through the same short-lived presigned URL used for downloads.
+
 ## Performance notes
 
 - TanStack Query caches folder listings: going back to a folder renders instantly and refreshes in the background. Hovering a folder prefetches it, and duplicate requests are merged.

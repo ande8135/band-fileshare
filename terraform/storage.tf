@@ -121,6 +121,12 @@ locals {
     png   = "image/png"
     webp  = "image/webp"
     woff2 = "font/woff2"
+    woff  = "font/woff"
+    otf   = "font/otf"
+    eot   = "application/vnd.ms-fontobject"
+    sf2   = "audio/x-soundfont"
+    sf3   = "audio/x-soundfont"
+    md    = "text/markdown; charset=utf-8"
     json  = "application/json"
     txt   = "text/plain; charset=utf-8"
   }
