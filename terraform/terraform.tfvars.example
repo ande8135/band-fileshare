@@ -5,3 +5,5 @@ google_client_id      = "1234567890-abc.apps.googleusercontent.com"
 # Pass the secret via env var rather than a file:
 #   export TF_VAR_google_client_secret='GOCSPX-...'
 # dev_origins         = ["http://localhost:8080"]
+# monthly_budget_usd  = 10                    # account-wide budget alert (default 10)
+# budget_alert_emails = ["you@example.com"]   # defaults to admin_emails

@@ -51,3 +51,20 @@ variable "presign_expiry_seconds" {
   type        = number
   default     = 900
 }
+
+variable "monthly_budget_usd" {
+  description = "Monthly cost budget for the whole AWS account, in USD. Alerts at 80% actual, 100% actual and 100% forecast."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.monthly_budget_usd > 0
+    error_message = "monthly_budget_usd must be greater than 0."
+  }
+}
+
+variable "budget_alert_emails" {
+  description = "Who gets budget alerts. Defaults to admin_emails when empty."
+  type        = list(string)
+  default     = []
+}

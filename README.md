@@ -46,6 +46,16 @@ Re-running `./deploy.sh` after changing `web/` or `backend/` redeploys them. `in
 - To revoke someone: Cognito console → User pools → Users → delete (delete both the invited user and any Google-linked one with the same email). Current sessions stay valid until the 1h token expires.
 - Add/remove admins by editing `admin_emails` and re-applying.
 
+## Cost alert
+
+Terraform creates an **account-wide** AWS Budget (`terraform/budget.tf`) of `monthly_budget_usd` (default $10). It covers everything billed to the account, not only this app, and emails `budget_alert_emails` (default: `admin_emails`) when:
+
+- actual spend passes 80% of the budget,
+- actual spend passes 100%,
+- AWS forecasts the month will end over 100%.
+
+Budget emails need no confirmation. AWS Budgets updates a few times a day, so alerts can lag spend by several hours. The first two budgets in an account are free.
+
 ## Performance notes
 
 - TanStack Query caches folder listings: going back to a folder renders instantly and refreshes in the background. Hovering a folder prefetches it, and duplicate requests are merged.
